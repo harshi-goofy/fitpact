@@ -19,6 +19,7 @@ import {
   cheatSundays,
   dayOfWeek,
   daysBetween,
+  daysInMonth,
   daysLeftInMonth,
   formatDayLabel,
   isSunday,
@@ -36,6 +37,7 @@ import type {
   MonthTarget,
   Streak,
   WeightPlan,
+  WeightWeek,
 } from "./types";
 
 export type EntryMap = Record<DateKey, Entry>;
@@ -173,17 +175,22 @@ export function buildMonthTargets(
 ): MonthTarget[] {
   const left = daysLeftInMonth(today);
   const weeksLeft = Math.max(left / 7, 0.01);
+  // Settings store weekly targets; multiply by weeks-in-month to get the monthly number.
+  const weeksInMonth = Math.round(daysInMonth(today) / 7);
 
-  const spec: { key: HabitKey; label: string; target: number }[] = [
-    { key: "swim", label: "Swim sessions", target: s.monthlySwimTarget },
-    { key: "gym", label: "Gym sessions", target: s.monthlyGymTarget },
-    { key: "diet", label: "Diet days on target", target: s.monthlyDietTarget },
+  // swim/gym are always whole numbers; diet can show a decimal.
+  const spec: { key: HabitKey; label: string; weeklyTarget: number; whole: boolean }[] = [
+    { key: "swim", label: "Swim sessions", weeklyTarget: s.monthlySwimTarget, whole: true },
+    { key: "gym", label: "Gym sessions", weeklyTarget: s.monthlyGymTarget, whole: true },
+    { key: "diet", label: "Diet days on target", weeklyTarget: s.monthlyDietTarget, whole: false },
   ];
 
-  return spec.map(({ key, label, target }) => {
+  return spec.map(({ key, label, weeklyTarget, whole }) => {
+    const target = weeklyTarget * weeksInMonth;
     const done = countInMonth(entries, today, key);
     const remaining = Math.max(target - done, 0);
     const perWeek = remaining / weeksLeft;
+    const perWeekDisplay = whole ? Math.ceil(perWeek).toString() : perWeek.toFixed(1);
 
     let note: string;
     if (remaining === 0) {
@@ -191,7 +198,7 @@ export function buildMonthTargets(
     } else if (remaining > left) {
       note = `${remaining} to go · only ${left} day${left === 1 ? "" : "s"} left, out of reach`;
     } else {
-      note = `${remaining} to go · ${perWeek.toFixed(1)} per week keeps you on track`;
+      note = `${remaining} to go · ${perWeekDisplay} per week keeps you on track`;
     }
 
     return { key, label, done, target, pct: target === 0 ? 0 : Math.min(done / target, 1), note };
@@ -247,6 +254,40 @@ export function buildWeightPlan(
     cursor = end;
   }
 
+  // Monthly target = end-of-month weight from the first checkpoint.
+  const monthlyTargetKg = checkpoints[0]?.targetKg ?? s.goalWeightKg;
+
+  // Weekly breakdown for the current month — lets the user see week-by-week progress.
+  const { start: monthStart } = monthRange(today);
+  const totalMonthDays = daysInMonth(today);
+  const numWeeks = Math.ceil(totalMonthDays / 7);
+  const weeklyLogs: WeightWeek[] = [];
+
+  for (let w = 0; w < numWeeks; w++) {
+    const wkStart = addDays(monthStart, w * 7);
+    const wkEnd = addDays(monthStart, Math.min((w + 1) * 7 - 1, totalMonthDays - 1));
+
+    // Most recent weight logged in this week (or null).
+    const weekKeys = Object.keys(entries)
+      .filter((k) => k >= wkStart && k <= wkEnd && entries[k].weightKg !== null)
+      .sort();
+    const loggedRaw = weekKeys.length > 0 ? (entries[weekKeys[weekKeys.length - 1]].weightKg as number) : null;
+
+    // Plan target at end of week.
+    const elapsed = Math.min(Math.max(daysBetween(s.startDate, wkEnd), 0), totalDays);
+    const targetKg = s.startWeightKg - perDayPlanned * elapsed;
+
+    weeklyLogs.push({
+      weekNum: w + 1,
+      weekStart: wkStart,
+      weekEnd: wkEnd,
+      targetKg: Math.round(targetKg * 10) / 10,
+      loggedKg: loggedRaw !== null ? Math.round(loggedRaw * 10) / 10 : null,
+      past: wkEnd < today,
+      current: wkStart <= today && wkEnd >= today,
+    });
+  }
+
   const daysToGoal = Math.max(daysBetween(today, s.goalDate), 0);
   const weeksToGoal = Math.max(daysToGoal / 7, 0.01);
   const toGoKg = Math.max(currentKg - s.goalWeightKg, 0);
@@ -264,6 +305,8 @@ export function buildWeightPlan(
     daysToGoal,
     checkpoints,
     nextCheckpoint: checkpoints[0] ?? null,
+    monthlyTargetKg,
+    weeklyLogs,
   };
 }
 

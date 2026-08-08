@@ -33,6 +33,18 @@ export type MonthTarget = {
   note: string;
 };
 
+export type WeightWeek = {
+  weekNum: number;
+  weekStart: DateKey;
+  weekEnd: DateKey;
+  /** What the plan says you should weigh by end of this week. */
+  targetKg: number;
+  /** Most recent weight logged within this week, or null. */
+  loggedKg: number | null;
+  past: boolean;
+  current: boolean;
+};
+
 export type WeightPlan = {
   startKg: number;
   goalKg: number;
@@ -50,6 +62,10 @@ export type WeightPlan = {
   checkpoints: { month: string; date: DateKey; targetKg: number }[];
   /** The checkpoint for the current month, surfaced on the card. */
   nextCheckpoint: { month: string; date: DateKey; targetKg: number } | null;
+  /** Target weight at end of current month. */
+  monthlyTargetKg: number;
+  /** Per-week breakdown for the current month. */
+  weeklyLogs: WeightWeek[];
 };
 
 export type CheatPlan = {

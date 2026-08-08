@@ -42,7 +42,7 @@ export function Eyebrow({
 }) {
   return (
     <div
-      className={`text-[11px] font-bold uppercase tracking-[1.4px] text-muted ${className}`}
+      className={`text-[12px] font-bold uppercase tracking-[1.4px] text-muted ${className}`}
     >
       {children}
     </div>
@@ -52,8 +52,8 @@ export function Eyebrow({
 export function SectionHeading({ title, aside }: { title: string; aside?: string }) {
   return (
     <div className="mt-7 mb-3 flex items-baseline justify-between">
-      <h2 className="text-[17px] font-bold tracking-[-.2px] text-text">{title}</h2>
-      {aside ? <span className="text-[12.5px] font-semibold text-muted">{aside}</span> : null}
+      <h2 className="text-[18px] font-bold tracking-[-.2px] text-text">{title}</h2>
+      {aside ? <span className="text-[13.5px] font-semibold text-muted">{aside}</span> : null}
     </div>
   );
 }
@@ -121,10 +121,10 @@ export function StatBlock({
 }) {
   return (
     <div className="flex-1">
-      <div className="text-[16px] font-bold tracking-[-.3px]" style={{ color }}>
+      <div className="text-[17px] font-bold tracking-[-.3px]" style={{ color }}>
         {value}
       </div>
-      <div className="mt-0.5 text-[11px] font-semibold text-muted">{label}</div>
+      <div className="mt-0.5 text-[12px] font-semibold text-muted">{label}</div>
     </div>
   );
 }

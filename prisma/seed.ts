@@ -11,9 +11,10 @@ const START_WEIGHT_KG = 88;
 const GOAL_WEIGHT_KG = 78;
 const GOAL_DATE = "2027-01-01";
 
-const MONTHLY_SWIM_TARGET = 16;
-const MONTHLY_GYM_TARGET = 20;
-const MONTHLY_DIET_TARGET = 28;
+// Weekly targets — the app multiplies by weeks-in-month to get the monthly number.
+const WEEKLY_SWIM_TARGET = 4;
+const WEEKLY_GYM_TARGET = 5;
+const WEEKLY_DIET_TARGET = 7;
 /* ------------------------------------------------------------------ */
 
 function todayInTz(tz: string): Date {
@@ -46,9 +47,9 @@ async function main() {
     where: { id: "singleton" },
     update: {
       timezone: tz,
-      monthlySwimTarget: MONTHLY_SWIM_TARGET,
-      monthlyGymTarget: MONTHLY_GYM_TARGET,
-      monthlyDietTarget: MONTHLY_DIET_TARGET,
+      monthlySwimTarget: WEEKLY_SWIM_TARGET,
+      monthlyGymTarget: WEEKLY_GYM_TARGET,
+      monthlyDietTarget: WEEKLY_DIET_TARGET,
       startWeightKg: START_WEIGHT_KG,
       goalWeightKg: GOAL_WEIGHT_KG,
       goalDate: goal,
@@ -56,9 +57,9 @@ async function main() {
     create: {
       id: "singleton",
       timezone: tz,
-      monthlySwimTarget: MONTHLY_SWIM_TARGET,
-      monthlyGymTarget: MONTHLY_GYM_TARGET,
-      monthlyDietTarget: MONTHLY_DIET_TARGET,
+      monthlySwimTarget: WEEKLY_SWIM_TARGET,
+      monthlyGymTarget: WEEKLY_GYM_TARGET,
+      monthlyDietTarget: WEEKLY_DIET_TARGET,
       startWeightKg: START_WEIGHT_KG,
       goalWeightKg: GOAL_WEIGHT_KG,
       goalDate: goal,
@@ -72,7 +73,7 @@ async function main() {
   console.log("Seeded:");
   console.log("  tracker :", tracker.name, `(${tracker.email})`);
   console.log("  partner :", partner.name, `(${partner.email})`);
-  console.log("  targets :", `swim ${MONTHLY_SWIM_TARGET} · gym ${MONTHLY_GYM_TARGET} · diet ${MONTHLY_DIET_TARGET} per month`);
+  console.log("  targets :", `swim ${WEEKLY_SWIM_TARGET} · gym ${WEEKLY_GYM_TARGET} · diet ${WEEKLY_DIET_TARGET} per week`);
   console.log("  weight  :", `${START_WEIGHT_KG}kg -> ${GOAL_WEIGHT_KG}kg by ${GOAL_DATE}`);
   console.log("  pace    :", `${perWeek.toFixed(2)} kg/week over ${days} days`);
 }
