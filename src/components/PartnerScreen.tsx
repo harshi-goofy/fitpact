@@ -137,19 +137,23 @@ export default function PartnerScreen({
                       : undefined
                   }
                 >
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-[12px] font-bold text-lime">{c.authorName}</span>
-                    <span className="shrink-0 text-[11px] font-semibold text-faint">
-                      {relativeTime(c.createdAt)}
-                    </span>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <span className="text-[12px] font-bold text-lime">{c.authorName}</span>
+                      <span className="ml-2 text-[11px] font-semibold text-faint">
+                        {relativeTime(c.createdAt)}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => onDelete(c.id)}
+                      className="shrink-0 rounded-lg px-2.5 py-1 text-[12px] font-bold transition-opacity active:opacity-60"
+                      style={{ background: "rgba(255,80,80,.13)", color: "#ff6060" }}
+                      aria-label="Delete comment"
+                    >
+                      Delete
+                    </button>
                   </div>
-                  <p className="mt-1 text-[13.5px] font-medium leading-snug text-text">{c.body}</p>
-                  <button
-                    onClick={() => onDelete(c.id)}
-                    className="mt-1.5 text-[11px] font-semibold text-faint underline-offset-2 hover:underline"
-                  >
-                    Delete
-                  </button>
+                  <p className="mt-1.5 text-[13.5px] font-medium leading-snug text-text">{c.body}</p>
                 </Card>
               ))}
             </div>
