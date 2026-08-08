@@ -1,11 +1,16 @@
 import "dotenv/config";
+import { createHash } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+const hashPin = (pin: string) => createHash("sha256").update(pin).digest("hex");
+
 /* ---- Edit this block, then run: npm run db:seed ------------------- */
-const TRACKER = { name: "Harshi", email: "harshi@example.com" };
-const PARTNER = { name: "Manoj", email: "kadiyalasaimanoj@gmail.com" };
+// PINs are how the app tells Harshi from Manoj. Change these to whatever you
+// both want, re-run the seed, and log in again on each phone.
+const TRACKER = { name: "Harshi", email: "harshi@example.com", pin: "1111" };
+const PARTNER = { name: "Manoj", email: "kadiyalasaimanoj@gmail.com", pin: "2222" };
 
 const START_WEIGHT_KG = 88;
 const GOAL_WEIGHT_KG = 78;
@@ -30,14 +35,24 @@ async function main() {
 
   const tracker = await prisma.user.upsert({
     where: { email: TRACKER.email },
-    update: { name: TRACKER.name, role: "TRACKER" },
-    create: { name: TRACKER.name, email: TRACKER.email, role: "TRACKER" },
+    update: { name: TRACKER.name, role: "TRACKER", pinHash: hashPin(TRACKER.pin) },
+    create: {
+      name: TRACKER.name,
+      email: TRACKER.email,
+      role: "TRACKER",
+      pinHash: hashPin(TRACKER.pin),
+    },
   });
 
   const partner = await prisma.user.upsert({
     where: { email: PARTNER.email },
-    update: { name: PARTNER.name, role: "PARTNER" },
-    create: { name: PARTNER.name, email: PARTNER.email, role: "PARTNER" },
+    update: { name: PARTNER.name, role: "PARTNER", pinHash: hashPin(PARTNER.pin) },
+    create: {
+      name: PARTNER.name,
+      email: PARTNER.email,
+      role: "PARTNER",
+      pinHash: hashPin(PARTNER.pin),
+    },
   });
 
   // Targets and the weight plan are updated on every seed so they can be
@@ -71,8 +86,8 @@ async function main() {
   const perWeek = days > 0 ? ((START_WEIGHT_KG - GOAL_WEIGHT_KG) / days) * 7 : 0;
 
   console.log("Seeded:");
-  console.log("  tracker :", tracker.name, `(${tracker.email})`);
-  console.log("  partner :", partner.name, `(${partner.email})`);
+  console.log("  tracker :", tracker.name, `(${tracker.email})  PIN ${TRACKER.pin}`);
+  console.log("  partner :", partner.name, `(${partner.email})  PIN ${PARTNER.pin}`);
   console.log("  targets :", `swim ${WEEKLY_SWIM_TARGET} · gym ${WEEKLY_GYM_TARGET} · diet ${WEEKLY_DIET_TARGET} per week`);
   console.log("  weight  :", `${START_WEIGHT_KG}kg -> ${GOAL_WEIGHT_KG}kg by ${GOAL_DATE}`);
   console.log("  pace    :", `${perWeek.toFixed(2)} kg/week over ${days} days`);

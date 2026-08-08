@@ -4,6 +4,7 @@
  * and every refetch go through identical code.
  */
 
+import { currentUser } from "./auth";
 import { prisma } from "./db";
 import { computeStats, type EntryMap, type StatsSettings } from "./stats";
 import { addDays, dateToKey, keyToDate, lastNDays, todayKey, type DateKey } from "./timezone";
@@ -37,7 +38,7 @@ export async function loadBoard(days = 180): Promise<BoardPayload> {
   const tz = row?.timezone ?? FALLBACK.timezone;
   const today = todayKey(tz);
 
-  const [tracker, partner] = await Promise.all([getTracker(), getPartner()]);
+  const [tracker, partner, me] = await Promise.all([getTracker(), getPartner(), currentUser()]);
 
   // Pull extra history so a streak that predates the visible window still
   // resolves, and so lifetime totals and best-ever are honest.
@@ -51,6 +52,8 @@ export async function loadBoard(days = 180): Promise<BoardPayload> {
         swimDone: true,
         gymDone: true,
         dietDone: true,
+        moveConfirmedAt: true,
+        dietConfirmedAt: true,
         note: true,
         weightKg: true,
         photoMime: true,
@@ -73,6 +76,8 @@ export async function loadBoard(days = 180): Promise<BoardPayload> {
       swimDone: r.swimDone,
       gymDone: r.gymDone,
       dietDone: r.dietDone,
+      moveConfirmedAt: r.moveConfirmedAt?.toISOString() ?? null,
+      dietConfirmedAt: r.dietConfirmedAt?.toISOString() ?? null,
       note: r.note,
       weightKg: r.weightKg,
       hasPhoto: r.photoMime !== null,
@@ -124,5 +129,6 @@ export async function loadBoard(days = 180): Promise<BoardPayload> {
     comments,
     // Anything the partner said that the tracker hasn't acknowledged yet.
     unseen: comments.filter((c) => !c.seen && c.authorRole === "PARTNER").length,
+    me: me ? { id: me.id, name: me.name, role: me.role } : null,
   };
 }

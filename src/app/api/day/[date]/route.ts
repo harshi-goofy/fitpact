@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { AuthError, requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getTracker, loadBoard } from "@/lib/board";
 import { isEditable, keyToDate, todayKey } from "@/lib/timezone";
@@ -25,6 +26,16 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  */
 export async function PATCH(req: Request, ctx: { params: Promise<{ date: string }> }) {
   const { date } = await ctx.params;
+
+  // Logging is the tracker's job; the partner's job is confirming it.
+  try {
+    await requireRole("TRACKER");
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
 
   if (!DATE_RE.test(date)) {
     return NextResponse.json({ error: "Bad date format, expected YYYY-MM-DD" }, { status: 400 });
@@ -86,11 +97,25 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ date: string 
 
   const tracker = await getTracker();
 
+  /**
+   * Changing a claim invalidates its confirmation.
+   *
+   * Otherwise: log gym, get it confirmed, then tick swim as well and the swim
+   * arrives pre-confirmed without the partner ever seeing it. Any edit to the
+   * move fields clears the move confirmation, and likewise for diet.
+   */
+  const touchedMove = "swimDone" in data || "gymDone" in data;
+  const touchedDiet = "dietDone" in data;
+  const reset = {
+    ...(touchedMove ? { moveConfirmedAt: null } : {}),
+    ...(touchedDiet ? { dietConfirmedAt: null } : {}),
+  };
+
   // Upsert on the unique (userId, date) pair, so a double-tap can never
   // produce two rows for the same day.
   await prisma.dayEntry.upsert({
     where: { userId_date: { userId: tracker.id, date: keyToDate(date) } },
-    update: data,
+    update: { ...data, ...reset },
     create: { userId: tracker.id, date: keyToDate(date), ...data },
   });
 

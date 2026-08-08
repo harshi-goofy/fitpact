@@ -5,6 +5,7 @@ import type { BoardPayload, HabitKey } from "@/lib/types";
 import { EMPTY_ENTRY } from "@/lib/types";
 import BadgesScreen from "./BadgesScreen";
 import CalendarScreen from "./CalendarScreen";
+import LoginScreen from "./LoginScreen";
 import PartnerScreen from "./PartnerScreen";
 import TodayScreen from "./TodayScreen";
 import { HABIT } from "./ui";
@@ -69,10 +70,12 @@ export default function App({ initial }: { initial: BoardPayload }) {
   const [board, setBoard] = useState(initial);
   const [tab, setTab] = useState<Tab>("today");
   const [busy, setBusy] = useState<HabitKey | null>(null);
-  const [posting, setPosting] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; bad?: boolean } | null>(null);
 
   const entry = board.entries[board.today] ?? EMPTY_ENTRY(board.today);
+  const isTracker = board.me?.role === "TRACKER";
+  const stats = board.stats;
 
   useEffect(() => {
     if (!toast) return;
@@ -98,6 +101,10 @@ export default function App({ initial }: { initial: BoardPayload }) {
   const toggle = useCallback(
     async (habit: HabitKey) => {
       if (busy) return;
+      if (!isTracker) {
+        setToast({ text: "Only the tracker can log habits.", bad: true });
+        return;
+      }
       const field = `${habit}Done` as const;
       const next = !entry[field];
       const snapshot = board;
@@ -129,77 +136,95 @@ export default function App({ initial }: { initial: BoardPayload }) {
         setBusy(null);
       }
     },
-    [board, busy, entry],
+    [board, busy, entry, isTracker],
   );
 
-  const postComment = useCallback(
-    async (body: string, cheer: boolean, asPartner: boolean) => {
-      setPosting(true);
+  /**
+   * The partner ticking a box. Not optimistic — a confirmation changing the
+   * streak is exactly the thing that must not flicker back if the write fails.
+   */
+  const confirm = useCallback(
+    async (date: string, kind: "move" | "diet", confirmed: boolean) => {
+      const key = `${date}:${kind}`;
+      if (confirmBusy) return;
+      setConfirmBusy(key);
       try {
-        const res = await fetch(`/api/day/${board.today}/comments`, {
+        const res = await fetch(`/api/confirm/${date}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ body, cheer, asPartner }),
+          body: JSON.stringify({ kind, confirmed }),
         });
-        if (!res.ok) throw new Error("Could not post");
-        await refresh();
-        setToast({ text: cheer ? "Cheer sent" : "Comment posted" });
-      } catch {
-        setToast({ text: "Could not post", bad: true });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j.error ?? "Could not confirm");
+        }
+        const fresh: BoardPayload = await res.json();
+        setBoard(fresh);
+        setToast({
+          text: confirmed
+            ? `${kind === "move" ? "Move" : "Diet"} confirmed · streak ${fresh.stats.streak.count}`
+            : `${kind === "move" ? "Move" : "Diet"} unconfirmed`,
+        });
+      } catch (err) {
+        setToast({ text: err instanceof Error ? err.message : "Could not confirm", bad: true });
       } finally {
-        setPosting(false);
+        setConfirmBusy(null);
       }
     },
-    [board.today, refresh],
+    [confirmBusy],
   );
 
-  const deleteComment = useCallback(
-    async (id: string) => {
-      const snapshot = board;
-      setBoard((b) => ({ ...b, comments: b.comments.filter((c) => c.id !== id) }));
-      const res = await fetch(`/api/comments/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        setBoard(snapshot);
-        setToast({ text: "Could not delete", bad: true });
-      }
-    },
-    [board],
-  );
+  const signOut = useCallback(async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setBoard((b) => ({ ...b, me: null }));
+  }, []);
 
-  // Opening the tab is the acknowledgement — clear the dot.
-  useEffect(() => {
-    if (tab !== "partner" || board.unseen === 0) return;
-    fetch("/api/comments/seen", { method: "POST" })
-      .then(() => setBoard((b) => ({ ...b, unseen: 0 })))
-      .catch(() => {});
-  }, [tab, board.unseen]);
+  // Not signed in — the PIN gate is the whole app until it is satisfied.
+  if (!board.me) {
+    return <LoginScreen onSignedIn={refresh} />;
+  }
 
   return (
     <div className="mx-auto min-h-dvh w-full max-w-[430px] px-5 pb-28">
-      {board.unseen > 0 && tab !== "partner" ? (
+      {/* Who's holding the phone, and a way out of it. */}
+      <div className="flex items-center justify-between pt-3">
+        <span className="text-[11.5px] font-bold uppercase tracking-[1.2px] text-faint">
+          {board.me.name} · {board.me.role === "TRACKER" ? "logging" : "confirming"}
+        </span>
+        <button
+          onClick={signOut}
+          className="text-[11.5px] font-bold uppercase tracking-[1.2px] text-faint underline-offset-2 active:underline"
+        >
+          Switch
+        </button>
+      </div>
+
+      {stats.awaitingConfirm > 0 && tab !== "partner" ? (
         <button
           onClick={() => setTab("partner")}
-          className="mt-3 w-full rounded-2xl border px-4 py-3 text-left text-[13px] font-bold"
+          className="mt-2 w-full rounded-2xl border px-4 py-3 text-left text-[13px] font-bold"
           style={{ borderColor: "rgba(200,245,66,.35)", background: "rgba(200,245,66,.07)" }}
         >
-          <span className="text-lime">{board.partner?.name ?? "Your partner"}</span> left{" "}
-          {board.unseen} new {board.unseen === 1 ? "message" : "messages"} →
+          <span className="text-lime">{stats.awaitingConfirm}</span>{" "}
+          {stats.awaitingConfirm === 1 ? "box" : "boxes"}{" "}
+          {board.me.role === "PARTNER" ? "waiting on you" : `waiting on ${board.partner?.name ?? "your partner"}`} →
         </button>
       ) : null}
 
       {tab === "today" ? (
-        <TodayScreen board={board} entry={entry} onToggle={toggle} busy={busy} />
+        <TodayScreen
+          board={board}
+          entry={entry}
+          onToggle={toggle}
+          busy={busy}
+          canLog={isTracker}
+        />
       ) : tab === "calendar" ? (
-        <CalendarScreen board={board} onRefresh={refresh} />
+        <CalendarScreen board={board} onRefresh={refresh} canLog={isTracker} />
       ) : tab === "badges" ? (
         <BadgesScreen board={board} />
       ) : (
-        <PartnerScreen
-          board={board}
-          onPost={postComment}
-          onDelete={deleteComment}
-          posting={posting}
-        />
+        <PartnerScreen board={board} onConfirm={confirm} busyKey={confirmBusy} />
       )}
 
       {toast ? (
@@ -236,7 +261,7 @@ export default function App({ initial }: { initial: BoardPayload }) {
                 >
                   {t.label}
                 </span>
-                {t.id === "partner" && board.unseen > 0 ? (
+                {t.id === "partner" && stats.awaitingConfirm > 0 ? (
                   <span className="absolute right-[22%] top-0 h-1.5 w-1.5 rounded-full bg-lime" />
                 ) : null}
               </button>

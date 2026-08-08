@@ -17,9 +17,11 @@ import { Card, Eyebrow, HABIT, HABIT_ORDER, HEAT, LetterBadge } from "./ui";
 export default function CalendarScreen({
   board,
   onRefresh,
+  canLog = true,
 }: {
   board: BoardPayload;
   onRefresh?: () => void;
+  canLog?: boolean;
 }) {
   const { today, entries, stats } = board;
   const [selected, setSelected] = useState(today);
@@ -201,7 +203,11 @@ export default function CalendarScreen({
         {/* Weight logging */}
         <div className="mt-4 border-t border-line pt-4">
           <Eyebrow className="mb-2.5">Weight</Eyebrow>
-          {!isFuture ? (
+          {!canLog ? (
+            <p className="text-[13px] font-semibold text-faint">
+              Only {board.tracker.name} can log weight.
+            </p>
+          ) : !isFuture ? (
             <div className="flex items-center gap-2.5">
               <input
                 type="number"

@@ -8,10 +8,12 @@
 
 import {
   buildCheatPlan,
+  buildConfirmRows,
   buildMonthTargets,
   buildWeightPlan,
   bestStreak,
   currentStreak,
+  dayExpired,
   daySatisfied,
   heatLevel,
   longestPerfectRun,
@@ -44,13 +46,23 @@ function eq<T>(actual: T, expected: T, msg = "") {
 
 /* ---- fixtures ------------------------------------------------------ */
 
-/** "sgd" -> swim+gym+diet, "d" -> diet only, "" -> logged but nothing done. */
+/**
+ * "sgd" -> swim+gym+diet, "d" -> diet only, "" -> logged but nothing done.
+ *
+ * Confirmed by default, because most tests are about the streak rule rather
+ * than the confirmation mechanic. Append "!" to leave the day unconfirmed —
+ * i.e. claimed by the tracker but never ticked by the partner.
+ */
 function entry(date: string, flags: string): Entry {
+  const unconfirmed = flags.includes("!");
+  const stamp = unconfirmed ? null : "2026-01-01T00:00:00.000Z";
   return {
     date,
     swimDone: flags.includes("s"),
     gymDone: flags.includes("g"),
     dietDone: flags.includes("d"),
+    moveConfirmedAt: stamp,
+    dietConfirmedAt: stamp,
     note: null,
     weightKg: null,
     hasPhoto: false,
@@ -63,10 +75,12 @@ function map(spec: Record<string, string>): EntryMap {
   return out;
 }
 
+// These fields hold WEEKLY targets; buildMonthTargets multiplies by the
+// number of weeks in the month. Aug 2026 has 31 days -> 4 weeks.
 const SETTINGS: StatsSettings = {
-  monthlySwimTarget: 16,
-  monthlyGymTarget: 20,
-  monthlyDietTarget: 28,
+  monthlySwimTarget: 4,
+  monthlyGymTarget: 5,
+  monthlyDietTarget: 7,
   startWeightKg: 88,
   goalWeightKg: 78,
   goalDate: "2027-01-01",
@@ -218,7 +232,7 @@ check("month targets count only this month, only up to today", () => {
   eq(t[0].done, 2, "swim: 2 and 3 Aug.");
   eq(t[1].done, 2, "gym: 2 and 3 Aug.");
   eq(t[2].done, 1, "diet: 2 Aug only.");
-  eq(t[1].target, 20);
+  eq(t[1].target, 20, "5/week x 4 weeks in August.");
 });
 
 check("month targets warn when the maths stops working", () => {
@@ -228,6 +242,7 @@ check("month targets warn when the maths stops working", () => {
 });
 
 check("a met target says so instead of showing a pace", () => {
+  // Swim target for August is 4/week x 4 weeks = 16.
   const e: EntryMap = {};
   for (let d = 1; d <= 16; d++) {
     const k = `2026-08-${String(d).padStart(2, "0")}`;
@@ -304,6 +319,93 @@ check("a streak survives Dec into Jan", () => {
     "2027-01-01": "sgd",
   });
   eq(currentStreak(e, "2027-01-01").count, 3);
+});
+
+/* ---- partner confirmation ------------------------------------------- */
+
+check("an unconfirmed day does not count toward the streak", () => {
+  // 5 Aug 2026 is a Wednesday. "sgd!" = everything claimed, nothing confirmed.
+  const e = map({ "2026-08-05": "sgd!" });
+  eq(daySatisfied(e, "2026-08-05"), false, "claimed but never ticked.");
+  const ok = map({ "2026-08-05": "sgd" });
+  eq(daySatisfied(ok, "2026-08-05"), true, "same day, confirmed.");
+});
+
+check("confirmation is per-half — move and diet are independent", () => {
+  const e = map({ "2026-08-05": "sgd" });
+  // Confirm the move but not the diet.
+  e["2026-08-05"].dietConfirmedAt = null;
+  eq(daySatisfied(e, "2026-08-05"), false, "diet still outstanding.");
+  e["2026-08-05"].dietConfirmedAt = "2026-08-05T10:00:00.000Z";
+  e["2026-08-05"].moveConfirmedAt = null;
+  eq(daySatisfied(e, "2026-08-05"), false, "move still outstanding.");
+});
+
+check("Sundays satisfy the streak with no confirmation at all", () => {
+  const e = map({ "2026-08-09": "" }); // 9 Aug 2026 is a Sunday
+  eq(daySatisfied(e, "2026-08-09"), true, "rest days are free, always.");
+  eq(daySatisfied({}, "2026-08-16"), true, "even with no row at all.");
+});
+
+check("an unconfirmed claim expires once the 24h window closes", () => {
+  const e = map({ "2026-08-05": "sgd!" });
+  eq(dayExpired(e, "2026-08-05", "2026-08-05"), false, "same day — still open.");
+  eq(dayExpired(e, "2026-08-05", "2026-08-06"), false, "next day — still open.");
+  eq(dayExpired(e, "2026-08-05", "2026-08-07"), true, "window closed, claim gone.");
+});
+
+check("a confirmed day never expires", () => {
+  const e = map({ "2026-08-05": "sgd" });
+  eq(dayExpired(e, "2026-08-05", "2026-08-30"), false);
+});
+
+check("a day with nothing claimed has nothing to expire", () => {
+  eq(dayExpired(map({}), "2026-08-05", "2026-08-30"), false, "no row.");
+  eq(dayExpired(map({ "2026-08-05": "" }), "2026-08-05", "2026-08-30"), false, "empty row.");
+});
+
+check("month targets ignore unconfirmed sessions", () => {
+  const e = map({ "2026-08-03": "sgd", "2026-08-04": "sgd!" });
+  const t = buildMonthTargets(e, "2026-08-08", SETTINGS);
+  eq(t[0].done, 1, "only the confirmed swim counts.");
+  eq(t[2].done, 1, "only the confirmed diet counts.");
+});
+
+check("calendar heat only shows confirmed habits", () => {
+  const e = map({ "2026-08-04": "sgd!" });
+  eq(heatLevel(e, "2026-08-04"), 0, "claimed but unconfirmed reads as an empty day.");
+});
+
+check("confirm rows run Monday to Sunday for the current week", () => {
+  // 8 Aug 2026 is a Saturday; its Monday is the 3rd.
+  const rows = buildConfirmRows(map({}), "2026-08-08");
+  eq(rows.length, 7);
+  eq(rows[0].date, "2026-08-03");
+  eq(rows[6].date, "2026-08-09");
+  eq(rows[6].isSunday, true);
+  eq(rows[5].isToday, true, "Saturday is today.");
+  eq(rows[6].future, true, "Sunday hasn't happened yet.");
+});
+
+check("confirm rows report what was claimed and what's still open", () => {
+  const e = map({ "2026-08-07": "gd!" }); // Friday: gym + diet, unconfirmed
+  const rows = buildConfirmRows(e, "2026-08-08");
+  const fri = rows[4];
+  eq(fri.date, "2026-08-07");
+  eq(fri.movedLogged, true);
+  eq(fri.moveKinds, ["gym"]);
+  eq(fri.moveConfirmed, false);
+  eq(fri.dietLogged, true);
+  eq(fri.dietConfirmed, false);
+  eq(fri.confirmable, true, "yesterday — window still open.");
+  eq(fri.expired, false);
+});
+
+check("a row past its window reports as expired, not confirmable", () => {
+  const e = map({ "2026-08-03": "sd!" }); // Monday, unconfirmed
+  const rows = buildConfirmRows(e, "2026-08-08");
+  eq(rows[0].confirmable, false);
+  eq(rows[0].expired, true);
 });
 
 /* ---- report ---------------------------------------------------------- */

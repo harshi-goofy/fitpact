@@ -28,6 +28,9 @@ model User {
   name      String
   email     String     @unique
   role      Role
+  // SHA-256 of a 4-digit PIN. No login provider for a two-person app; the PIN
+  // exists so the tracker cannot tick the partner's confirmation boxes.
+  pinHash   String?
   createdAt DateTime   @default(now())
   entries   DayEntry[]
   comments  Comment[]
@@ -44,6 +47,12 @@ model DayEntry {
   swimDone Boolean @default(false)
   gymDone  Boolean @default(false)
   dietDone Boolean @default(false)
+
+  // Partner confirmation. What the tracker logs is provisional until the
+  // partner ticks it off; only confirmed days count toward the streak and the
+  // calendar. Unconfirmed days expire once the 24h window closes.
+  moveConfirmedAt DateTime?
+  dietConfirmedAt DateTime?
 
   note      String?  @db.VarChar(280)
   photo     Bytes?

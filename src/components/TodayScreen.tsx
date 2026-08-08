@@ -14,11 +14,13 @@ export default function TodayScreen({
   entry,
   onToggle,
   busy,
+  canLog = true,
 }: {
   board: BoardPayload;
   entry: Entry;
   onToggle: (habit: HabitKey) => void;
   busy: HabitKey | null;
+  canLog?: boolean;
 }) {
   const { stats, tracker, today } = board;
   const { streak, weight, cheat } = stats;
@@ -92,32 +94,64 @@ export default function TodayScreen({
           const h = HABIT[key];
           const done = entry[`${key}Done`];
           const isBusy = busy === key;
+          // Swim and gym share one "move" confirmation; diet has its own.
+          const confirmed =
+            key === "diet" ? entry.dietConfirmedAt !== null : entry.moveConfirmedAt !== null;
+          const state = !done
+            ? "none"
+            : confirmed
+              ? "confirmed"
+              : "pending";
           return (
             <button
               key={key}
               onClick={() => onToggle(key)}
-              disabled={isBusy}
+              disabled={isBusy || !canLog}
               aria-pressed={done}
               className="flex flex-1 flex-col items-center gap-2.5 rounded-[20px] border bg-card px-3 py-4 transition-colors disabled:opacity-60"
-              style={{ borderColor: done ? h.hex : "var(--color-line)" }}
+              style={{
+                borderColor: done ? h.hex : "var(--color-line)",
+                borderStyle: state === "pending" ? "dashed" : "solid",
+              }}
             >
               <LetterBadge
-                letter={done ? "✓" : h.letter}
+                letter={state === "confirmed" ? "✓" : h.letter}
                 color={h.hex}
                 tint={h.tint}
-                filled={done}
+                filled={state === "confirmed"}
               />
               <span className="text-[14px] font-bold text-text">{h.label}</span>
               <span
                 className="text-[12px] font-semibold"
                 style={{ color: done ? h.hex : "var(--color-muted)" }}
               >
-                {isBusy ? "Saving…" : done ? "Logged" : "Not logged"}
+                {isBusy
+                  ? "Saving…"
+                  : state === "confirmed"
+                    ? "Confirmed"
+                    : state === "pending"
+                      ? "Awaiting ✓"
+                      : "Not logged"}
               </span>
             </button>
           );
         })}
       </div>
+
+      {!canLog ? (
+        <p className="mt-3 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] font-semibold text-text-2">
+          You're signed in as the partner — tap <span className="text-lime">Together</span> to
+          confirm {tracker.name}'s days.
+        </p>
+      ) : stats.awaitingConfirm > 0 ? (
+        <p className="mt-3 rounded-2xl border px-4 py-3 text-[13px] font-semibold text-text-2"
+          style={{ borderColor: "rgba(200,245,66,.3)", background: "rgba(200,245,66,.05)" }}
+        >
+          <span className="text-lime">{stats.awaitingConfirm} waiting.</span> Nothing counts until{" "}
+          {board.partner?.name ?? "your partner"} confirms — the window closes at the end of
+          tomorrow.
+        </p>
+      ) : null}
 
       {stats.isRestToday ? (
         <p className="mt-3 rounded-2xl border border-line bg-card px-4 py-3 text-[13.5px] font-semibold text-text-2">

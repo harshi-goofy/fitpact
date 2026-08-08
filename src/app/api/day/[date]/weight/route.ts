@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { AuthError, requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getTracker, loadBoard } from "@/lib/board";
 import { keyToDate, monthRange, todayKey } from "@/lib/timezone";
@@ -16,6 +17,15 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  */
 export async function PATCH(req: Request, ctx: { params: Promise<{ date: string }> }) {
   const { date } = await ctx.params;
+
+  try {
+    await requireRole("TRACKER");
+  } catch (err) {
+    if (err instanceof AuthError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    throw err;
+  }
 
   if (!DATE_RE.test(date)) {
     return NextResponse.json({ error: "Bad date format, expected YYYY-MM-DD" }, { status: 400 });

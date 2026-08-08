@@ -9,9 +9,16 @@
  * THE RULES
  *   A day counts toward the streak when:
  *       Sunday                      -> always (every Sunday is a rest day)
- *       otherwise                   -> dietDone AND (swimDone OR gymDone)
+ *       otherwise                   -> a CONFIRMED move AND a CONFIRMED diet
  *   Today never breaks the streak. An unsatisfied today is `pending`.
  *   Cheat meals are the 2nd and 4th Sunday of the month, afternoon only.
+ *
+ * CONFIRMATION
+ *   What the tracker logs is a claim, not a fact. The partner has until the
+ *   end of the following day to tick it; only then does it count toward the
+ *   streak, the calendar and the month targets. Miss the window and the claim
+ *   expires — that is the whole accountability mechanic, so it lives here in
+ *   the rules rather than in a component.
  */
 
 import {
@@ -22,6 +29,7 @@ import {
   daysInMonth,
   daysLeftInMonth,
   formatDayLabel,
+  isConfirmable,
   isSunday,
   monthRange,
   nextCheatSunday,
@@ -32,6 +40,7 @@ import type {
   Badge,
   BoardStats,
   CheatPlan,
+  ConfirmRow,
   Entry,
   HabitKey,
   MonthTarget,
@@ -53,15 +62,56 @@ export type StatsSettings = {
 };
 
 /* ------------------------------------------------------------------ *
+ * Confirmation
+ * ------------------------------------------------------------------ */
+
+/** A move was claimed for this day. */
+export function moveLogged(entries: EntryMap, key: DateKey): boolean {
+  const e = entries[key];
+  return !!e && (e.swimDone || e.gymDone);
+}
+
+/** A move was claimed AND the partner ticked it. */
+export function moveConfirmed(entries: EntryMap, key: DateKey): boolean {
+  const e = entries[key];
+  return !!e && (e.swimDone || e.gymDone) && e.moveConfirmedAt !== null;
+}
+
+export function dietLogged(entries: EntryMap, key: DateKey): boolean {
+  return !!entries[key]?.dietDone;
+}
+
+export function dietConfirmed(entries: EntryMap, key: DateKey): boolean {
+  const e = entries[key];
+  return !!e && e.dietDone && e.dietConfirmedAt !== null;
+}
+
+/**
+ * Claimed, unconfirmed, and the window has closed. The claim is dead — it
+ * cannot be confirmed any more and it never counted.
+ */
+export function dayExpired(entries: EntryMap, key: DateKey, today: DateKey): boolean {
+  if (isSunday(key) || key > today || isConfirmable(key, today)) return false;
+  const movePending = moveLogged(entries, key) && !moveConfirmed(entries, key);
+  const dietPending = dietLogged(entries, key) && !dietConfirmed(entries, key);
+  return movePending || dietPending;
+}
+
+/* ------------------------------------------------------------------ *
  * The streak
  * ------------------------------------------------------------------ */
 
-/** Did this day satisfy the streak? Sundays always do. */
+/**
+ * Did this day satisfy the streak? Sundays always do.
+ *
+ * Confirmation is load-bearing: an unconfirmed claim contributes nothing,
+ * whether the window is still open or has already closed.
+ */
 export function daySatisfied(entries: EntryMap, key: DateKey): boolean {
   if (isSunday(key)) return true;
   const e = entries[key];
   if (!e) return false;
-  return e.dietDone && (e.swimDone || e.gymDone);
+  return dietConfirmed(entries, key) && moveConfirmed(entries, key);
 }
 
 /** Was anything at all logged? Drives "did I open the app" rendering. */
@@ -163,9 +213,16 @@ export function monthKeys(entries: EntryMap, key: DateKey, today: DateKey): Date
   return Object.keys(entries).filter((k) => k >= start && k < end && k <= today);
 }
 
+/**
+ * Confirmed sessions this month. Unconfirmed claims don't move the bars —
+ * the targets have to mean the same thing as the streak.
+ */
 export function countInMonth(entries: EntryMap, today: DateKey, habit: HabitKey): number {
   const field = `${habit}Done` as const;
-  return monthKeys(entries, today, today).filter((k) => entries[k][field]).length;
+  return monthKeys(entries, today, today).filter((k) => {
+    if (!entries[k][field]) return false;
+    return habit === "diet" ? dietConfirmed(entries, k) : moveConfirmed(entries, k);
+  }).length;
 }
 
 export function buildMonthTargets(
@@ -414,11 +471,58 @@ export function buildBadges(
  * Calendar heat
  * ------------------------------------------------------------------ */
 
-/** 0–3: how many of swim / gym / diet were logged that day. */
+/**
+ * 0–3: how many of swim / gym / diet are *confirmed* that day.
+ * The calendar shows the record, and the record is what the partner signed off.
+ */
 export function heatLevel(entries: EntryMap, key: DateKey): 0 | 1 | 2 | 3 {
   const e = entries[key];
   if (!e) return 0;
-  return (Number(e.swimDone) + Number(e.gymDone) + Number(e.dietDone)) as 0 | 1 | 2 | 3;
+  const move = e.moveConfirmedAt !== null;
+  const diet = e.dietConfirmedAt !== null;
+  return (Number(e.swimDone && move) +
+    Number(e.gymDone && move) +
+    Number(e.dietDone && diet)) as 0 | 1 | 2 | 3;
+}
+
+/* ------------------------------------------------------------------ *
+ * The Together screen's seven rows
+ * ------------------------------------------------------------------ */
+
+/**
+ * Mon–Sun for the week containing `today`, shaped for the partner's screen.
+ *
+ * Everything the row needs to render — what was claimed, what's confirmed,
+ * whether the window is still open — is decided here so the component only
+ * draws. Sundays are shown but never need confirming.
+ */
+export function buildConfirmRows(entries: EntryMap, today: DateKey): ConfirmRow[] {
+  const monday = weekStart(today);
+  const letters = ["M", "T", "W", "T", "F", "S", "S"];
+
+  return letters.map((dayLetter, i) => {
+    const date = addDays(monday, i);
+    const e = entries[date];
+    const moveKinds: HabitKey[] = [];
+    if (e?.swimDone) moveKinds.push("swim");
+    if (e?.gymDone) moveKinds.push("gym");
+
+    return {
+      date,
+      label: formatDayLabel(date),
+      dayLetter,
+      movedLogged: moveLogged(entries, date),
+      dietLogged: dietLogged(entries, date),
+      moveKinds,
+      moveConfirmed: moveConfirmed(entries, date),
+      dietConfirmed: dietConfirmed(entries, date),
+      confirmable: date <= today && isConfirmable(date, today),
+      expired: dayExpired(entries, date, today),
+      future: date > today,
+      isToday: date === today,
+      isSunday: isSunday(date),
+    };
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -427,10 +531,12 @@ export function heatLevel(entries: EntryMap, key: DateKey): 0 | 1 | 2 | 3 {
 
 export function computeStats(entries: EntryMap, today: DateKey, s: StatsSettings): BoardStats {
   const all = Object.keys(entries).filter((k) => k <= today);
+  // Lifetime totals count confirmed sessions only, for the same reason the
+  // streak does: an unconfirmed claim isn't a record of anything.
   const totals = {
-    swim: all.filter((k) => entries[k].swimDone).length,
-    gym: all.filter((k) => entries[k].gymDone).length,
-    diet: all.filter((k) => entries[k].dietDone).length,
+    swim: all.filter((k) => entries[k].swimDone && entries[k].moveConfirmedAt !== null).length,
+    gym: all.filter((k) => entries[k].gymDone && entries[k].moveConfirmedAt !== null).length,
+    diet: all.filter((k) => entries[k].dietDone && entries[k].dietConfirmedAt !== null).length,
     sessions: 0,
   };
   totals.sessions = totals.swim + totals.gym;
@@ -438,8 +544,21 @@ export function computeStats(entries: EntryMap, today: DateKey, s: StatsSettings
   const streak = buildStreak(entries, today, s.startDate);
   const weight = buildWeightPlan(entries, today, s);
   const badges = buildBadges(entries, today, s, totals, streak, weight);
+  const confirmRows = buildConfirmRows(entries, today);
+
+  // Boxes the partner can still act on right now.
+  const awaitingConfirm = confirmRows.reduce(
+    (n, r) =>
+      n +
+      (r.confirmable && !r.isSunday
+        ? Number(r.movedLogged && !r.moveConfirmed) + Number(r.dietLogged && !r.dietConfirmed)
+        : 0),
+    0,
+  );
 
   return {
+    confirmRows,
+    awaitingConfirm,
     today,
     streak,
     monthTargets: buildMonthTargets(entries, today, s),

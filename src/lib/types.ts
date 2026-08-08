@@ -6,9 +6,33 @@ export type Entry = {
   swimDone: boolean;
   gymDone: boolean;
   dietDone: boolean;
+  /** ISO timestamps, set when the partner confirms. null = still provisional. */
+  moveConfirmedAt: string | null;
+  dietConfirmedAt: string | null;
   note: string | null;
   weightKg: number | null;
   hasPhoto: boolean;
+};
+
+/** One Mon–Sun row on the Together screen. */
+export type ConfirmRow = {
+  date: DateKey;
+  label: string;
+  dayLetter: string;
+  /** What the tracker claims for this day. */
+  movedLogged: boolean;
+  dietLogged: boolean;
+  /** Which of swim/gym were claimed — shown so the partner knows what they're confirming. */
+  moveKinds: HabitKey[];
+  moveConfirmed: boolean;
+  dietConfirmed: boolean;
+  /** Still inside the 24h window, so the partner can act. */
+  confirmable: boolean;
+  /** Window closed with something unconfirmed — that claim is gone. */
+  expired: boolean;
+  future: boolean;
+  isToday: boolean;
+  isSunday: boolean;
 };
 
 export type HabitKey = "swim" | "gym" | "diet";
@@ -98,6 +122,10 @@ export type BoardStats = {
   totals: { swim: number; gym: number; diet: number; sessions: number };
   badges: Badge[];
   badgesEarned: number;
+  /** Mon–Sun rows powering the Together screen. */
+  confirmRows: ConfirmRow[];
+  /** How many boxes are waiting on the partner right now. */
+  awaitingConfirm: number;
 };
 
 export type CommentDTO = {
@@ -131,6 +159,8 @@ export type BoardPayload = {
   partner: { id: string; name: string } | null;
   comments: CommentDTO[];
   unseen: number;
+  /** Who is holding the phone. Drives what the UI lets them do. */
+  me: { id: string; name: string; role: "TRACKER" | "PARTNER" } | null;
 };
 
 export const EMPTY_ENTRY = (date: DateKey): Entry => ({
@@ -138,6 +168,8 @@ export const EMPTY_ENTRY = (date: DateKey): Entry => ({
   swimDone: false,
   gymDone: false,
   dietDone: false,
+  moveConfirmedAt: null,
+  dietConfirmedAt: null,
   note: null,
   weightKg: null,
   hasPhoto: false,

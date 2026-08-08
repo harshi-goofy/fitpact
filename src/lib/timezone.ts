@@ -151,6 +151,15 @@ export function isEditable(key: DateKey, today: DateKey = todayKey()): boolean {
   return key === today || key === addDays(today, -1);
 }
 
+/**
+ * The partner's confirmation window: the day itself and the day after.
+ * Same shape as isEditable, named separately because they answer different
+ * questions and could diverge.
+ */
+export function isConfirmable(key: DateKey, today: DateKey = todayKey()): boolean {
+  return key === today || key === addDays(today, -1);
+}
+
 /** Inclusive list of DateKeys ending at `end`, `count` long. */
 export function lastNDays(count: number, end: DateKey = todayKey()): DateKey[] {
   const out: DateKey[] = [];
