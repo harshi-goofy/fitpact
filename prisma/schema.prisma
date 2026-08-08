@@ -1,0 +1,95 @@
+// FitPact — data model
+// See PRD §7. Kept user-scoped so a second tracker can be added later
+// without a migration, even though v1 shows one tracker only.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  TRACKER
+  PARTNER
+}
+
+model User {
+  id        String     @id @default(cuid())
+  name      String
+  email     String     @unique
+  role      Role
+  createdAt DateTime   @default(now())
+  entries   DayEntry[]
+  comments  Comment[]
+}
+
+model DayEntry {
+  id     String   @id @default(cuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date   DateTime @db.Date // date-only, resolved in APP_TIMEZONE
+
+  // Movement: any one of these satisfies the daily streak.
+  // Only gymDone counts toward the weekly gym quota.
+  gymDone  Boolean @default(false)
+  walkDone Boolean @default(false)
+  runDone  Boolean @default(false)
+
+  swimDone Boolean @default(false) // its own daily streak
+  dietDone Boolean @default(false) // its own daily streak
+
+  isRestDay  Boolean @default(false) // spends a rest token; preserves movement + swim
+  isCheatDay Boolean @default(false) // spends a cheat token; preserves diet
+
+  note      String?  @db.VarChar(280)
+  photo     Bytes?
+  photoMime String?
+  weightKg  Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  date      DateTime @db.Date
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body      String   @db.VarChar(500)
+  createdAt DateTime @default(now())
+
+  @@index([date])
+}
+
+model Nudge {
+  id         String   @id @default(cuid())
+  fromUserId String
+  date       DateTime @db.Date
+  sentAt     DateTime @default(now())
+
+  @@unique([fromUserId, date])
+}
+
+model Settings {
+  id                 String   @id @default("singleton")
+  timezone           String   @default("Asia/Kolkata")
+  weeklyGymTarget    Int      @default(5)
+  weeklySwimTarget   Int      @default(7)
+  monthlyRestTokens  Int      @default(4)
+  monthlyCheatTokens Int      @default(4)
+  whyNote            String?
+  startDate          DateTime @db.Date
+}
+
+model Milestone {
+  id      String   @id @default(cuid())
+  kind    String
+  shownAt DateTime @default(now())
+
+  @@unique([kind])
+}

@@ -1,26 +1,48 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+ * One hue per habit, reused everywhere — check-in groups, calendar slivers,
+ * stat header, and later the recap email. The whole point of the calendar is
+ * that a column of gaps reads instantly as "swimming is the problem", and that
+ * only works if the colour never moves.
+ *
+ * Token-satisfied days use the -muted variant: a dimmer version of the SAME
+ * hue, never a failure colour. A rest day is a day the plan worked.
+ */
+@theme {
+  --color-ink: #0a0a0c;
+  --color-surface: #141418;
+  --color-surface-2: #1d1d23;
+  --color-line: #2a2a32;
+  --color-text: #ededf0;
+  --color-muted: #8a8a96;
+
+  --color-movement: #f59e0b;
+  --color-movement-muted: #7a5410;
+  --color-swim: #38bdf8;
+  --color-swim-muted: #1c5c7a;
+  --color-diet: #4ade80;
+  --color-diet-muted: #226b41;
+
+  --color-empty: #26262e;
+  --color-warn: #f87171;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-ink);
+  color: var(--color-text);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: contain;
+}
+
+/* Toggles are tapped with a thumb, at night, repeatedly. Nothing should
+   select, zoom, or otherwise get in the way. */
+button {
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
 }
