@@ -3,9 +3,9 @@
 // Redesign notes (Aug 2026):
 //   - Walk and Run were dropped. A day is Swim / Gym / Diet, nothing else.
 //   - Rest and cheat days are no longer stored flags or spendable tokens.
-//     Every Sunday is a rest day and the 1st + 3rd Sunday of the month are
-//     also cheat days. Both are derived from the calendar in src/lib/rules.ts,
-//     so they can never drift out of sync with the entries.
+//     Every Sunday is a rest day and every other Sunday is also a cheat day,
+//     on a rolling 14-day cadence. Both are derived from the calendar in
+//     src/lib/timezone.ts, so they can never drift out of sync with entries.
 //   - Weight now has a plan: startWeightKg -> goalWeightKg by goalDate, with
 //     per-month checkpoints back-calculated from that straight line.
 

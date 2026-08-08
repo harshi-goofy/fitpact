@@ -101,9 +101,9 @@ export function daysLeftInMonth(key: DateKey): number {
  * Rest and cheat days are calendar facts, not stored flags.
  *
  * Every Sunday is a rest day: the streak survives it whatever you did.
- * The 1st and 3rd Sunday of each month are also cheat days — afternoon
- * meal only — which lands on exactly two per month, every month, with
- * no counter to spend and nothing that can drift.
+ * Every other Sunday is also a cheat day — afternoon meal only — on a
+ * continuous 14-day cadence, with no counter to spend and nothing that
+ * can drift out of sync.
  * ------------------------------------------------------------------ */
 
 export function isSunday(key: DateKey): boolean {
@@ -125,27 +125,37 @@ export function sundaysInMonth(key: DateKey): DateKey[] {
 }
 
 /**
- * The 1st and 3rd Sunday of the month containing `key`.
+ * Cheat Sundays are every *other* Sunday, on a continuous 14-day cadence that
+ * ignores month boundaries entirely.
  *
- * Deliberately not the 3rd and 5th: a month with only four Sundays would
- * silently drop to one cheat meal. First and third always exist, are always
- * exactly two weeks apart, and are always exactly two.
+ * Anchored on a known cheat Sunday rather than counted per month. The
+ * consequence, on purpose: a month can hold two or three of them, because a
+ * fixed fortnightly rhythm doesn't reset on the 1st. The gap between any two
+ * consecutive cheat meals is always exactly 14 days, which is the property
+ * that actually matters when you're pacing yourself.
  */
-export function cheatSundays(key: DateKey): DateKey[] {
-  const all = sundaysInMonth(key);
-  return [all[0], all[2]].filter(Boolean);
+export const CHEAT_ANCHOR: DateKey = "2026-08-16";
+
+/** Positive modulo — `%` alone returns negatives for dates before the anchor. */
+function mod(n: number, m: number): number {
+  return ((n % m) + m) % m;
 }
 
 export function isCheatSunday(key: DateKey): boolean {
-  return cheatSundays(key).includes(key);
+  if (!isSunday(key)) return false;
+  return mod(daysBetween(CHEAT_ANCHOR, key), 14) === 0;
 }
 
-/** The next cheat Sunday on or after `key`. Rolls into next month if needed. */
+/** The cheat Sundays falling inside the month containing `key`. Two or three. */
+export function cheatSundays(key: DateKey): DateKey[] {
+  return sundaysInMonth(key).filter(isCheatSunday);
+}
+
+/** The next cheat Sunday on or after `key`. */
 export function nextCheatSunday(key: DateKey): DateKey {
-  const upcoming = cheatSundays(key).find((d) => d >= key);
-  if (upcoming) return upcoming;
-  const { end } = monthRange(key);
-  return cheatSundays(end)[0];
+  // Step to the next Sunday on or after `key`, then to the right fortnight.
+  const sunday = addDays(key, (6 - dayOfWeek(key) + 7) % 7);
+  return isCheatSunday(sunday) ? sunday : addDays(sunday, 7);
 }
 
 /**

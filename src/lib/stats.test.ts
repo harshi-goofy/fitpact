@@ -21,7 +21,15 @@ import {
   type EntryMap,
   type StatsSettings,
 } from "./stats";
-import { cheatSundays, isSunday, nextCheatSunday, sundaysInMonth } from "./timezone";
+import {
+  addDays,
+  cheatSundays,
+  daysBetween,
+  isCheatSunday,
+  isSunday,
+  nextCheatSunday,
+  sundaysInMonth,
+} from "./timezone";
 import type { Entry } from "./types";
 
 /* ---- tiny harness ------------------------------------------------- */
@@ -105,31 +113,59 @@ check("all Sundays in the month", () => {
   ]);
 });
 
-check("cheat days are the 1st and 3rd Sunday — exactly two", () => {
-  // Aug 2026 Sundays: 2, 9, 16, 23, 30.
-  eq(cheatSundays("2026-08-08"), ["2026-08-02", "2026-08-16"]);
-  // February 2027 starts on a Monday and has only four Sundays; still two.
-  // This is why the rule isn't "3rd and 5th" — there is no 5th to use.
-  eq(cheatSundays("2027-02-01"), ["2027-02-07", "2027-02-21"]);
-  eq(cheatSundays("2027-02-01").length, 2);
+check("cheat days are every other Sunday, on a rolling 14-day cadence", () => {
+  // Aug 2026 Sundays: 2, 9, 16, 23, 30. Anchor is the 16th.
+  eq(isCheatSunday("2026-08-16"), true, "the anchor itself.");
+  eq(isCheatSunday("2026-08-09"), false, "the Sunday between two cheats.");
+  eq(isCheatSunday("2026-08-02"), true, "14 days before the anchor.");
+  eq(isCheatSunday("2026-08-30"), true, "14 days after.");
+  eq(isCheatSunday("2026-08-23"), false);
+  eq(isCheatSunday("2026-08-15"), false, "a Saturday is never a cheat day.");
 });
 
-check("next cheat Sunday rolls into next month when the month is spent", () => {
-  eq(nextCheatSunday("2026-08-08"), "2026-08-16", "the 3rd Sunday is still ahead.");
+check("the cadence keeps rolling across month and year boundaries", () => {
+  // Straight fortnightly steps from the anchor, ignoring the calendar.
+  eq(isCheatSunday("2026-09-13"), true);
+  eq(isCheatSunday("2026-09-27"), true);
+  eq(isCheatSunday("2026-09-20"), false, "the odd Sunday in between.");
+  eq(isCheatSunday("2027-01-03"), true, "20 weeks past the anchor, into next year.");
+  eq(isCheatSunday("2026-07-19"), true, "and backwards, before the anchor.");
+});
+
+check("a month holds two or three cheat Sundays — never a fixed count", () => {
+  // This is the accepted trade-off of a rolling cadence: it doesn't reset
+  // on the 1st, so August 2026 gets three.
+  eq(cheatSundays("2026-08-08"), ["2026-08-02", "2026-08-16", "2026-08-30"]);
+  eq(cheatSundays("2026-09-01"), ["2026-09-13", "2026-09-27"]);
+});
+
+check("consecutive cheat Sundays are always exactly 14 days apart", () => {
+  let cursor = "2026-08-02";
+  for (let i = 0; i < 12; i++) {
+    const next = nextCheatSunday(addDays(cursor, 1));
+    eq(daysBetween(cursor, next), 14, `step ${i}: ${cursor} -> ${next}`);
+    cursor = next;
+  }
+});
+
+check("next cheat Sunday skips the rest-only Sunday in between", () => {
+  eq(nextCheatSunday("2026-08-08"), "2026-08-16", "tomorrow is rest-only, so skip to the 16th.");
   eq(nextCheatSunday("2026-08-16"), "2026-08-16", "on the day itself.");
-  eq(nextCheatSunday("2026-08-17"), "2026-09-06", "after both — 1st Sunday of Sept.");
+  eq(nextCheatSunday("2026-08-17"), "2026-08-30");
+  eq(nextCheatSunday("2026-08-31"), "2026-09-13", "rolls into next month.");
 });
 
 check("cheat plan labels the next one relatively", () => {
   eq(buildCheatPlan("2026-08-15").whenLabel, "Tomorrow");
   eq(buildCheatPlan("2026-08-16").whenLabel, "Today");
   eq(buildCheatPlan("2026-08-08").whenLabel, "in 8 days");
-  eq(buildCheatPlan("2026-08-08").slots.length, 2);
+  eq(buildCheatPlan("2026-08-08").slots.length, 3, "August 2026 has three.");
+  eq(buildCheatPlan("2026-08-08").slots[2].state, "3rd of 3 this month", "ordinal survives 3.");
 });
 
 check("9 Aug 2026 is a rest Sunday but not a cheat Sunday", () => {
-  eq(isSunday("2026-08-09"), true);
-  eq(cheatSundays("2026-08-09").includes("2026-08-09"), false);
+  eq(isSunday("2026-08-09"), true, "still a rest day — the streak holds.");
+  eq(isCheatSunday("2026-08-09"), false, "but no cheat meal.");
 });
 
 /* ---- the streak rule ----------------------------------------------- */

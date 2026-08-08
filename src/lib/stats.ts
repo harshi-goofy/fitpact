@@ -11,7 +11,7 @@
  *       Sunday                      -> always (every Sunday is a rest day)
  *       otherwise                   -> a CONFIRMED move AND a CONFIRMED diet
  *   Today never breaks the streak. An unsatisfied today is `pending`.
- *   Cheat meals are the 1st and 3rd Sunday of the month, afternoon only.
+ *   Cheat meals are every other Sunday, afternoon only.
  *
  * CONFIRMATION
  *   What the tracker logs is a claim, not a fact. The partner has until the
@@ -379,6 +379,11 @@ function relativeDayLabel(from: DateKey, to: DateKey): string {
   return `in ${n} days`;
 }
 
+/** 1 -> "1st", 2 -> "2nd", 3 -> "3rd". Months can hold three cheat Sundays. */
+function ordinal(n: number): string {
+  return `${n}${n === 1 ? "st" : n === 2 ? "nd" : n === 3 ? "rd" : "th"}`;
+}
+
 export function buildCheatPlan(today: DateKey): CheatPlan {
   // "2nd of 2 this month" is the one that should make you think twice, so the
   // ordinal is part of the label rather than something you have to count.
@@ -386,10 +391,7 @@ export function buildCheatPlan(today: DateKey): CheatPlan {
   const slots = all.map((date, i) => ({
     date,
     label: formatDayLabel(date),
-    state:
-      date < today
-        ? "Used"
-        : `${i + 1}${i === 0 ? "st" : "nd"} of ${all.length} this month`,
+    state: date < today ? "Used" : `${ordinal(i + 1)} of ${all.length} this month`,
     past: date < today,
   }));
 
