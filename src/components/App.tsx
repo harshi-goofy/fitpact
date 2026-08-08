@@ -190,7 +190,7 @@ export default function App({ initial }: { initial: BoardPayload }) {
       {tab === "today" ? (
         <TodayScreen board={board} entry={entry} onToggle={toggle} busy={busy} />
       ) : tab === "calendar" ? (
-        <CalendarScreen board={board} />
+        <CalendarScreen board={board} onRefresh={refresh} />
       ) : tab === "badges" ? (
         <BadgesScreen board={board} />
       ) : (

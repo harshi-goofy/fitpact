@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { heatLevel } from "@/lib/stats";
 import {
   addDays,
@@ -14,15 +14,21 @@ import {
 import type { BoardPayload, HabitKey } from "@/lib/types";
 import { Card, Eyebrow, HABIT, HABIT_ORDER, HEAT, LetterBadge } from "./ui";
 
-export default function CalendarScreen({ board }: { board: BoardPayload }) {
+export default function CalendarScreen({
+  board,
+  onRefresh,
+}: {
+  board: BoardPayload;
+  onRefresh?: () => void;
+}) {
   const { today, entries, stats } = board;
   const [selected, setSelected] = useState(today);
+  const [weightInput, setWeightInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const { start } = monthRange(today);
   const total = daysInMonth(today);
-
-  // The grid runs Sun–Sat, so the leading blanks are however far into the week
-  // the 1st falls. dayOfWeek is Mon=0, so Sunday (6) maps to column 0.
   const lead = (dayOfWeek(start) + 1) % 7;
 
   const days = useMemo(
@@ -34,15 +40,42 @@ export default function CalendarScreen({ board }: { board: BoardPayload }) {
 
   const sel = entries[selected];
   const selLogged: HabitKey[] = HABIT_ORDER.filter((h) => sel?.[`${h}Done`]);
+  const isFuture = selected > today;
 
   const pctOf = (n: number, d: number) => (d === 0 ? 0 : Math.round((n / d) * 100));
   const elapsed = Math.max(days.filter((d) => d <= today).length, 1);
+
+  // Sync the weight input whenever the selected day or entries change.
+  useEffect(() => {
+    const w = entries[selected]?.weightKg;
+    setWeightInput(w != null ? w.toFixed(1) : "");
+    setSaved(false);
+  }, [selected, entries]);
+
+  async function saveWeight() {
+    const kg = parseFloat(weightInput);
+    if (!Number.isFinite(kg) || kg <= 0) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/day/${selected}/weight`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weightKg: kg }),
+      });
+      if (res.ok) {
+        setSaved(true);
+        onRefresh?.();
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="fp-screen">
       <header className="pt-3.5 pb-5">
         <Eyebrow>This month</Eyebrow>
-        <h1 className="mt-1 text-[26px] font-bold tracking-[-.5px] text-text">
+        <h1 className="mt-1 text-[28px] font-bold tracking-[-.5px] text-text">
           {stats.monthLabel}
         </h1>
       </header>
@@ -50,7 +83,7 @@ export default function CalendarScreen({ board }: { board: BoardPayload }) {
       <Card className="p-4">
         <div className="mb-2 grid grid-cols-7 gap-1.5">
           {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-            <div key={i} className="text-center text-[10px] font-bold text-faint">
+            <div key={i} className="text-center text-[11px] font-bold text-faint">
               {d}
             </div>
           ))}
@@ -64,17 +97,15 @@ export default function CalendarScreen({ board }: { board: BoardPayload }) {
             const level = heatLevel(entries, d);
             const isSel = d === selected;
             const future = d > today;
-            // A rest Sunday with nothing logged is a day the plan worked. It
-            // gets an outline rather than the empty fill, so a run of Sundays
-            // never reads as a run of misses.
             const restOnly = isSunday(d) && level === 0 && !future;
+            const hasWeight = entries[d]?.weightKg != null;
             return (
               <button
                 key={d}
                 onClick={() => setSelected(d)}
                 aria-label={`${formatDayLabel(d)}, ${level} of 3 logged`}
                 aria-pressed={isSel}
-                className="flex aspect-square items-center justify-center rounded-[9px] text-[11px] font-bold transition-transform active:scale-95"
+                className="relative flex aspect-square flex-col items-center justify-center rounded-[9px] text-[11px] font-bold transition-transform active:scale-95"
                 style={{
                   background: isSel ? "#f2f4ef" : future ? "transparent" : HEAT[level],
                   border: future
@@ -86,16 +117,33 @@ export default function CalendarScreen({ board }: { board: BoardPayload }) {
                   opacity: future ? 0.6 : 1,
                 }}
               >
-                {Number(d.slice(8))}
+                <span>{Number(d.slice(8))}</span>
+                {hasWeight ? (
+                  <span
+                    className="absolute bottom-[3px] left-1/2 h-[4px] w-[4px] -translate-x-1/2 rounded-full"
+                    style={{
+                      background: isSel ? HABIT.diet.hex : level >= 2 ? "#12150f" : HABIT.diet.hex,
+                    }}
+                  />
+                ) : null}
               </button>
             );
           })}
         </div>
 
         <div className="mt-4 flex items-center justify-between">
-          <span className="text-[11.5px] font-semibold text-muted">
-            {activeCount} of {total} days active
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[12px] font-semibold text-muted">
+              {activeCount} of {total} days active
+            </span>
+            <div className="flex items-center gap-1">
+              <span
+                className="h-[5px] w-[5px] rounded-full"
+                style={{ background: HABIT.diet.hex }}
+              />
+              <span className="text-[11px] font-semibold text-faint">weight logged</span>
+            </div>
+          </div>
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-semibold text-faint">less</span>
             {HEAT.map((c) => (
@@ -110,8 +158,8 @@ export default function CalendarScreen({ board }: { board: BoardPayload }) {
       <Card className="mt-3 p-5">
         <div className="flex items-baseline justify-between">
           <h2 className="text-[15px] font-bold text-text">
-            {selLogged.length > 0 ? "Logged" : isSunday(selected) ? "Rest day" : "Nothing logged"} ·{" "}
-            {formatDayLabel(selected)}
+            {selLogged.length > 0 ? "Logged" : isSunday(selected) ? "Rest day" : "Nothing logged"}{" "}
+            · {formatDayLabel(selected)}
           </h2>
           {isCheatSunday(selected) ? (
             <span
@@ -127,17 +175,22 @@ export default function CalendarScreen({ board }: { board: BoardPayload }) {
           <ul className="mt-3.5 flex flex-col gap-3">
             {selLogged.map((h) => (
               <li key={h} className="flex items-center gap-3">
-                <LetterBadge letter={HABIT[h].letter} color={HABIT[h].hex} tint={HABIT[h].tint} size={34} />
+                <LetterBadge
+                  letter={HABIT[h].letter}
+                  color={HABIT[h].hex}
+                  tint={HABIT[h].tint}
+                  size={34}
+                />
                 <div className="min-w-0 flex-1">
-                  <div className="text-[13.5px] font-bold text-text">{HABIT[h].label}</div>
-                  <div className="text-[11.5px] font-semibold text-faint">Completed</div>
+                  <div className="text-[14px] font-bold text-text">{HABIT[h].label}</div>
+                  <div className="text-[12px] font-semibold text-faint">Completed</div>
                 </div>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="mt-2.5 text-[12.5px] font-semibold text-faint">
-            {selected > today
+          <p className="mt-2.5 text-[13px] font-semibold text-faint">
+            {isFuture
               ? "Still to come."
               : isSunday(selected)
                 ? "Sundays are rest days — the streak holds."
@@ -145,13 +198,42 @@ export default function CalendarScreen({ board }: { board: BoardPayload }) {
           </p>
         )}
 
-        {sel?.weightKg ? (
-          <p className="mt-3.5 border-t border-line pt-3 text-[12.5px] font-semibold text-text-2">
-            Weight: <span className="text-text">{sel.weightKg.toFixed(1)} kg</span>
-          </p>
-        ) : null}
+        {/* Weight logging */}
+        <div className="mt-4 border-t border-line pt-4">
+          <Eyebrow className="mb-2.5">Weight</Eyebrow>
+          {!isFuture ? (
+            <div className="flex items-center gap-2.5">
+              <input
+                type="number"
+                step="0.1"
+                min="30"
+                max="300"
+                placeholder="e.g. 87.5"
+                value={weightInput}
+                onChange={(e) => {
+                  setWeightInput(e.target.value);
+                  setSaved(false);
+                }}
+                onKeyDown={(e) => e.key === "Enter" && saveWeight()}
+                className="w-[90px] rounded-xl border border-line bg-screen px-3 py-2 text-[15px] font-bold text-text placeholder:text-faint focus:outline-none focus:border-[var(--color-lime)]"
+              />
+              <span className="text-[14px] font-semibold text-muted">kg</span>
+              <button
+                onClick={saveWeight}
+                disabled={saving || !weightInput}
+                className="rounded-xl px-4 py-2 text-[13px] font-bold transition-opacity disabled:opacity-40"
+                style={{ background: "var(--color-lime)", color: "var(--color-on-lime)" }}
+              >
+                {saving ? "Saving…" : saved ? "Saved ✓" : "Save"}
+              </button>
+            </div>
+          ) : (
+            <p className="text-[13px] font-semibold text-faint">Future date — nothing to log.</p>
+          )}
+        </div>
+
         {sel?.note ? (
-          <p className="mt-2.5 text-[12.5px] font-medium italic text-text-2">“{sel.note}”</p>
+          <p className="mt-3 text-[13px] font-medium italic text-text-2">"{sel.note}"</p>
         ) : null}
       </Card>
 
@@ -166,7 +248,7 @@ export default function CalendarScreen({ board }: { board: BoardPayload }) {
             <div className="text-[22px] font-extrabold tracking-[-1px]" style={{ color: s.c }}>
               {s.v}
             </div>
-            <div className="mt-0.5 text-[11px] font-semibold leading-tight text-muted">{s.l}</div>
+            <div className="mt-0.5 text-[12px] font-semibold leading-tight text-muted">{s.l}</div>
           </Card>
         ))}
       </div>
