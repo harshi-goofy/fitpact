@@ -101,7 +101,7 @@ export function daysLeftInMonth(key: DateKey): number {
  * Rest and cheat days are calendar facts, not stored flags.
  *
  * Every Sunday is a rest day: the streak survives it whatever you did.
- * The 2nd and 4th Sunday of each month are also cheat days — afternoon
+ * The 1st and 3rd Sunday of each month are also cheat days — afternoon
  * meal only — which lands on exactly two per month, every month, with
  * no counter to spend and nothing that can drift.
  * ------------------------------------------------------------------ */
@@ -124,10 +124,16 @@ export function sundaysInMonth(key: DateKey): DateKey[] {
   return out;
 }
 
-/** The 2nd and 4th Sunday of the month containing `key`. */
+/**
+ * The 1st and 3rd Sunday of the month containing `key`.
+ *
+ * Deliberately not the 3rd and 5th: a month with only four Sundays would
+ * silently drop to one cheat meal. First and third always exist, are always
+ * exactly two weeks apart, and are always exactly two.
+ */
 export function cheatSundays(key: DateKey): DateKey[] {
   const all = sundaysInMonth(key);
-  return [all[1], all[3]].filter(Boolean);
+  return [all[0], all[2]].filter(Boolean);
 }
 
 export function isCheatSunday(key: DateKey): boolean {

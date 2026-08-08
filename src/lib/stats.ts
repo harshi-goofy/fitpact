@@ -11,7 +11,7 @@
  *       Sunday                      -> always (every Sunday is a rest day)
  *       otherwise                   -> a CONFIRMED move AND a CONFIRMED diet
  *   Today never breaks the streak. An unsatisfied today is `pending`.
- *   Cheat meals are the 2nd and 4th Sunday of the month, afternoon only.
+ *   Cheat meals are the 1st and 3rd Sunday of the month, afternoon only.
  *
  * CONFIRMATION
  *   What the tracker logs is a claim, not a fact. The partner has until the

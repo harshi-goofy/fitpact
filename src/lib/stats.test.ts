@@ -105,23 +105,31 @@ check("all Sundays in the month", () => {
   ]);
 });
 
-check("cheat days are the 2nd and 4th Sunday — exactly two", () => {
-  eq(cheatSundays("2026-08-08"), ["2026-08-09", "2026-08-23"]);
+check("cheat days are the 1st and 3rd Sunday — exactly two", () => {
+  // Aug 2026 Sundays: 2, 9, 16, 23, 30.
+  eq(cheatSundays("2026-08-08"), ["2026-08-02", "2026-08-16"]);
   // February 2027 starts on a Monday and has only four Sundays; still two.
+  // This is why the rule isn't "3rd and 5th" — there is no 5th to use.
+  eq(cheatSundays("2027-02-01"), ["2027-02-07", "2027-02-21"]);
   eq(cheatSundays("2027-02-01").length, 2);
 });
 
 check("next cheat Sunday rolls into next month when the month is spent", () => {
-  eq(nextCheatSunday("2026-08-08"), "2026-08-09", "before the first.");
-  eq(nextCheatSunday("2026-08-23"), "2026-08-23", "on the day itself.");
-  eq(nextCheatSunday("2026-08-24"), "2026-09-13", "after both — 2nd Sunday of Sept.");
+  eq(nextCheatSunday("2026-08-08"), "2026-08-16", "the 3rd Sunday is still ahead.");
+  eq(nextCheatSunday("2026-08-16"), "2026-08-16", "on the day itself.");
+  eq(nextCheatSunday("2026-08-17"), "2026-09-06", "after both — 1st Sunday of Sept.");
 });
 
 check("cheat plan labels the next one relatively", () => {
-  eq(buildCheatPlan("2026-08-08").whenLabel, "Tomorrow");
-  eq(buildCheatPlan("2026-08-09").whenLabel, "Today");
-  eq(buildCheatPlan("2026-08-10").whenLabel, "in 13 days");
+  eq(buildCheatPlan("2026-08-15").whenLabel, "Tomorrow");
+  eq(buildCheatPlan("2026-08-16").whenLabel, "Today");
+  eq(buildCheatPlan("2026-08-08").whenLabel, "in 8 days");
   eq(buildCheatPlan("2026-08-08").slots.length, 2);
+});
+
+check("9 Aug 2026 is a rest Sunday but not a cheat Sunday", () => {
+  eq(isSunday("2026-08-09"), true);
+  eq(cheatSundays("2026-08-09").includes("2026-08-09"), false);
 });
 
 /* ---- the streak rule ----------------------------------------------- */

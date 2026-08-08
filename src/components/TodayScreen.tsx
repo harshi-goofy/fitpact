@@ -340,7 +340,7 @@ export default function TodayScreen({
           </div>
         </div>
         <p className="mt-3 text-[13.5px] font-semibold leading-relaxed text-faint">
-          Afternoon meal only. The 2nd and 4th Sunday of each month — two per month, always.
+          Afternoon meal only. The 1st and 3rd Sunday of each month — two per month, always.
         </p>
         <div className="mt-3.5 flex gap-2.5">
           {cheat.slots.map((s) => (
