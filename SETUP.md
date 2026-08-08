@@ -1,6 +1,10 @@
 # FitPact — setup
 
-M1 (the core loop) is built: daily check-in, three streaks, weekly gym quota, rest/cheat tokens, and the 90-day calendar. No login — anyone with the URL can open and edit the board.
+A private accountability board for **swim, gym and diet**. One streak, a month
+calendar, badges, a weight plan, and a shared tab where your partner can cheer
+or comment.
+
+There's no login — anyone with the URL can open and edit the board.
 
 You need three things: Node, a free database, and a free host. About 20 minutes.
 
@@ -10,7 +14,7 @@ You need three things: Node, a free database, and a free host. About 20 minutes.
 
 Download the **LTS** version from [nodejs.org](https://nodejs.org) and run the installer.
 
-Check it worked — open Terminal (Mac) or PowerShell (Windows) and run:
+Check it worked — open Terminal and run:
 
 ```bash
 node --version
@@ -20,110 +24,118 @@ You should see something like `v22.x.x`.
 
 ## 2. Get a database
 
-1. Go to [neon.com](https://neon.com) and sign up (free tier is plenty — this app uses a few MB).
-2. Create a project. Name it `fitpact`.
-3. On the project dashboard find **Connection string** and copy the **pooled** one. It looks like:
+1. Go to [neon.com](https://neon.com) and sign up. The free tier is plenty.
+2. Create a project.
+3. On the dashboard find **Connection string** and copy the **pooled** one:
    `postgresql://user:pass@ep-xxx-pooler.region.aws.neon.tech/neondb?sslmode=require`
 
 ## 3. Configure the app
 
-In the `fitpact` folder, make a copy of `.env.example` and name it `.env`. Open it and paste your connection string:
+In the `fitpact` folder, copy `.env.example` to `.env`, then paste your string in:
 
 ```
-DATABASE_URL=postgresql://...the string you copied...
+DATABASE_URL=postgresql://…
 APP_TIMEZONE=Asia/Kolkata
 ```
 
-You can leave `SESSION_SECRET`, `CRON_SECRET` and `RESEND_API_KEY` as-is for now — nothing in M1 uses them.
-
-Open `prisma/seed.ts` and set the two names and emails at the top:
-
-```ts
-const TRACKER = { name: "Manoj", email: "kadiyalasaimanoj@gmail.com" };
-const PARTNER = { name: "...",   email: "..." };
-```
-
-## 4. Run it
-
-In Terminal, `cd` into the `fitpact` folder, then:
+## 4. Set up the database
 
 ```bash
+cd ~/Desktop/fitpact
 npm install
-npm run db:push    # creates the tables
-npm run db:seed    # creates the two people + settings
+npm run db:push
+npm run db:seed
+```
+
+`db:push` should say **"Your database is now in sync with your Prisma schema"**.
+
+> **If you set the app up before the redesign**, `db:push` will warn that it is
+> dropping the `walkDone`, `runDone`, `isRestDay` and `isCheatDay` columns. That
+> is expected — walk and run were removed, and rest and cheat days are now read
+> off the calendar instead of being stored. Say yes.
+
+`db:seed` prints the two accounts, your monthly targets and your weight pace.
+
+## 5. Run it
+
+```bash
 npm run dev
 ```
 
-Open <http://localhost:3000>. Tap Gym. The Movement number should go to 1.
-
-## 5. Put it online
-
-1. Push the folder to a **private** GitHub repo.
-2. Go to [vercel.com](https://vercel.com), sign in with GitHub, **Add New → Project**, pick the repo.
-3. Before deploying, add the environment variables — same `DATABASE_URL` and `APP_TIMEZONE` from your `.env`.
-4. Deploy. You get a URL like `fitpact-abc.vercel.app`. Add it to your home screen on both phones.
-
-Use the **same Neon database** for local and production. With two people there's no real risk and it removes a whole class of "works on my machine" problems.
+Open <http://localhost:3000>. Tap **Gym** → the tile turns lime and reads
+"Logged" → refresh → still logged. That means the database is wired up.
 
 ---
 
-## About there being no login
+## Changing your targets
 
-Anyone who has the URL can open the board and change the check-ins. Vercel URLs aren't guessable and the app sends `noindex` so it won't appear in search results, but treat the link like a password: don't post it anywhere, and be aware anyone you send it to keeps access.
+Everything personal lives in one block at the top of `prisma/seed.ts`:
 
-If that stops feeling okay, PIN login is roughly an afternoon's work and the PRD already specifies it (§9).
+```ts
+const TRACKER = { name: "Harshi", email: "harshi@example.com" };
+const PARTNER = { name: "Manoj",  email: "kadiyalasaimanoj@gmail.com" };
+
+const START_WEIGHT_KG = 88;
+const GOAL_WEIGHT_KG  = 78;
+const GOAL_DATE       = "2027-01-01";
+
+const MONTHLY_SWIM_TARGET = 16;
+const MONTHLY_GYM_TARGET  = 20;
+const MONTHLY_DIET_TARGET = 28;
+```
+
+Edit it and run `npm run db:seed` again. Targets and the weight plan update;
+your logged days are never touched.
 
 ---
 
-## What's in each file
+## The rules, in one place
 
-```
-prisma/schema.prisma      The data model. Change targets/defaults here.
-prisma/seed.ts            Creates the two people. Run once.
+- **The streak** needs **diet plus either swim or gym** on the same day.
+- **Every Sunday is a rest day** — the streak survives it whatever you did.
+- **The 2nd and 4th Sunday** of each month are **cheat meals**, afternoon only.
+  Two per month, every month. Nothing to spend, nothing to run out of.
+- **Today never breaks the streak.** An unlogged today shows as still open, not
+  as a zero, because the evening hasn't happened yet.
+- **Today and yesterday are editable.** Older days are locked — you can catch up
+  after falling asleep, but you can't rewrite last week to protect a streak.
+- **Comments are never locked.** Your partner can say something about any day.
 
-src/lib/timezone.ts       Every date decision. Days are "YYYY-MM-DD" strings
-                          resolved through APP_TIMEZONE, never browser time.
-src/lib/stats.ts          All streak, quota and token math. Pure functions —
-                          the API, the UI and (later) the emails all call this
-                          one module so they can never disagree.
-src/lib/board.ts          Loads everything the page needs in one query.
+## The weight plan
 
-src/app/page.tsx          The board (server-rendered).
-src/app/api/board         Refetch endpoint.
-src/app/api/day/[date]    PATCH one day. Enforces the edit window and the
-                          token budgets server-side.
+88 kg → 78 kg by 1 Jan 2027 is **0.48 kg/week** over 146 days. The straight line
+gives each month a checkpoint, shown under "Monthly plan" on the Today screen:
 
-src/components/CheckIn.tsx        Today's toggles, grouped by rule.
-src/components/StreakCalendar.tsx The 90-day grid.
-src/components/StatHeader.tsx     The three big numbers.
-```
+| End of | Target |
+|---|---|
+| Aug | 86.4 kg |
+| Sep | 84.4 kg |
+| Oct | 82.3 kg |
+| Nov | 80.2 kg |
+| Dec | 78.1 kg |
+| 1 Jan | 78.0 kg |
 
-## Changing the rules
+"Needed per week" is recalculated from wherever you actually are, so it goes up
+if you fall behind rather than quietly keeping the original promise.
 
-Targets live in the `Settings` row, not in code. The settings screen is M4, so for now edit them directly:
+---
+
+## Deploying
+
+1. Push to GitHub.
+2. Import the repo at [vercel.com](https://vercel.com).
+3. Add the environment variables — the **Import .env** button takes your `.env`
+   file as-is.
+4. Deploy. Use the **same Neon database** for local and production; with two
+   people there's no reason to keep them apart.
+
+## Running the tests
 
 ```bash
-npm run db:studio
+npx tsx src/lib/stats.test.ts
 ```
 
-That opens a table browser. Open `Settings`, change `weeklySwimTarget` or `monthlyRestTokens`, save.
-
-The PRD flags this one specifically: if the Swim streak keeps breaking after a month, drop `weeklySwimTarget` to 4 or 5 rather than abandoning the board. No migration needed.
-
-## Common problems
-
-**"No TRACKER user found"** — you skipped `npm run db:seed`.
-
-**"Can't reach database server"** — the `DATABASE_URL` in `.env` is wrong or wrapped in quotes it shouldn't have. Copy it again from Neon.
-
-**Yesterday's toggle does nothing** — that's correct behaviour for anything older than yesterday. Today and yesterday are editable; older days are locked.
-
-**The streak says 0 but I did it today** — check the toggle actually saved (the header shows "Saving…"). If today is unchecked the streak shows the count through yesterday and marks today pending; it doesn't zero out until the day is over.
-
----
-
-## What's not built yet
-
-M2 comments, photos, nudge · M3 reminder emails, weekly recap, weight chart · M4 milestones, why-note editor, settings screen.
-
-The schema and `stats.ts` already cover all of them — the weight field saves today, it just has no chart yet.
+25 tests covering the streak rule, rest Sundays, cheat-day scheduling, month
+targets, the weight back-calculation and the year boundary. Every rule in the
+app lives in `src/lib/stats.ts` as pure functions — if you change a rule, change
+it there and nowhere else.

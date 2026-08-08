@@ -1,6 +1,13 @@
 // FitPact — data model
-// See PRD §7. Kept user-scoped so a second tracker can be added later
-// without a migration, even though v1 shows one tracker only.
+//
+// Redesign notes (Aug 2026):
+//   - Walk and Run were dropped. A day is Swim / Gym / Diet, nothing else.
+//   - Rest and cheat days are no longer stored flags or spendable tokens.
+//     Every Sunday is a rest day and the 2nd + 4th Sunday of the month are
+//     also cheat days. Both are derived from the calendar in src/lib/rules.ts,
+//     so they can never drift out of sync with the entries.
+//   - Weight now has a plan: startWeightKg -> goalWeightKg by goalDate, with
+//     per-month checkpoints back-calculated from that straight line.
 
 generator client {
   provider = "prisma-client-js"
@@ -32,17 +39,11 @@ model DayEntry {
   user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   date   DateTime @db.Date // date-only, resolved in APP_TIMEZONE
 
-  // Movement: any one of these satisfies the daily streak.
-  // Only gymDone counts toward the weekly gym quota.
+  // The three things a day is made of. The streak needs dietDone AND
+  // (swimDone OR gymDone); Sundays are satisfied automatically.
+  swimDone Boolean @default(false)
   gymDone  Boolean @default(false)
-  walkDone Boolean @default(false)
-  runDone  Boolean @default(false)
-
-  swimDone Boolean @default(false) // its own daily streak
-  dietDone Boolean @default(false) // its own daily streak
-
-  isRestDay  Boolean @default(false) // spends a rest token; preserves movement + swim
-  isCheatDay Boolean @default(false) // spends a cheat token; preserves diet
+  dietDone Boolean @default(false)
 
   note      String?  @db.VarChar(280)
   photo     Bytes?
@@ -61,29 +62,42 @@ model Comment {
   authorId  String
   author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
   body      String   @db.VarChar(500)
+  // A cheer is a one-tap appreciation rather than a written note. Same table,
+  // because it is still "someone said something about this day".
+  cheer     Boolean  @default(false)
+  seenAt    DateTime?
   createdAt DateTime @default(now())
 
   @@index([date])
+  @@index([seenAt])
 }
 
 model Nudge {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   fromUserId String
-  date       DateTime @db.Date
-  sentAt     DateTime @default(now())
+  date       DateTime  @db.Date
+  seenAt     DateTime?
+  sentAt     DateTime  @default(now())
 
-  @@unique([fromUserId, date])
+  @@unique([fromUserId, date]) // one nudge per person per day
 }
 
 model Settings {
-  id                 String   @id @default("singleton")
-  timezone           String   @default("Asia/Kolkata")
-  weeklyGymTarget    Int      @default(5)
-  weeklySwimTarget   Int      @default(7)
-  monthlyRestTokens  Int      @default(4)
-  monthlyCheatTokens Int      @default(4)
-  whyNote            String?
-  startDate          DateTime @db.Date
+  id       String @id @default("singleton")
+  timezone String @default("Asia/Kolkata")
+
+  // Monthly session targets driving the progress bars on Today.
+  monthlySwimTarget Int @default(16)
+  monthlyGymTarget  Int @default(20)
+  monthlyDietTarget Int @default(28)
+
+  // The weight plan. Checkpoints are derived, never stored.
+  startWeightKg Float    @default(88)
+  goalWeightKg  Float    @default(78)
+  goalDate      DateTime @db.Date
+
+  whyNote   String?
+  startDate DateTime @db.Date
 }
 
 model Milestone {

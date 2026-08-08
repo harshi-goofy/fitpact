@@ -86,6 +86,62 @@ export function monthRange(key: DateKey): { start: DateKey; end: DateKey } {
   };
 }
 
+/** Number of days in the calendar month containing `key`. */
+export function daysInMonth(key: DateKey): number {
+  const { start, end } = monthRange(key);
+  return daysBetween(start, end);
+}
+
+/** Days left in the month, counting today. */
+export function daysLeftInMonth(key: DateKey): number {
+  return daysInMonth(key) - Number(key.slice(8, 10)) + 1;
+}
+
+/* ------------------------------------------------------------------ *
+ * Rest and cheat days are calendar facts, not stored flags.
+ *
+ * Every Sunday is a rest day: the streak survives it whatever you did.
+ * The 2nd and 4th Sunday of each month are also cheat days — afternoon
+ * meal only — which lands on exactly two per month, every month, with
+ * no counter to spend and nothing that can drift.
+ * ------------------------------------------------------------------ */
+
+export function isSunday(key: DateKey): boolean {
+  return dayOfWeek(key) === 6;
+}
+
+/** Every Sunday in the calendar month containing `key`, in order. */
+export function sundaysInMonth(key: DateKey): DateKey[] {
+  const { start, end } = monthRange(key);
+  const out: DateKey[] = [];
+  let d = start;
+  // Jump to the first Sunday, then stride a week at a time.
+  d = addDays(d, (6 - dayOfWeek(d) + 7) % 7);
+  while (d < end) {
+    out.push(d);
+    d = addDays(d, 7);
+  }
+  return out;
+}
+
+/** The 2nd and 4th Sunday of the month containing `key`. */
+export function cheatSundays(key: DateKey): DateKey[] {
+  const all = sundaysInMonth(key);
+  return [all[1], all[3]].filter(Boolean);
+}
+
+export function isCheatSunday(key: DateKey): boolean {
+  return cheatSundays(key).includes(key);
+}
+
+/** The next cheat Sunday on or after `key`. Rolls into next month if needed. */
+export function nextCheatSunday(key: DateKey): DateKey {
+  const upcoming = cheatSundays(key).find((d) => d >= key);
+  if (upcoming) return upcoming;
+  const { end } = monthRange(key);
+  return cheatSundays(end)[0];
+}
+
 /**
  * Today and yesterday are editable; anything older is read-only.
  * You can catch up after falling asleep, but you cannot rewrite last week to

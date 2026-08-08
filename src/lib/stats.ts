@@ -1,231 +1,417 @@
 /**
- * Streak, weekly-quota and token math. Pure functions over a map of entries,
- * so it is directly unit-testable and shared by the API, the UI and the cron
- * jobs. Nothing here reads the database or the clock — `today` is always passed
- * in, resolved through APP_TIMEZONE by the caller.
+ * Every rule in FitPact, as pure functions over an entry map.
  *
- * Do not reimplement any of this in a component. If the board and the weekly
- * recap ever disagree about a streak, the whole app stops being trustworthy.
+ * The API, the server-rendered first paint and the client's optimistic updates
+ * all call this one module. Nothing here touches Prisma, the network or the
+ * clock — `today` is always passed in — which is what makes it unit-testable
+ * and what stops two slightly different versions of the streak rule existing.
+ *
+ * THE RULES
+ *   A day counts toward the streak when:
+ *       Sunday                      -> always (every Sunday is a rest day)
+ *       otherwise                   -> dietDone AND (swimDone OR gymDone)
+ *   Today never breaks the streak. An unsatisfied today is `pending`.
+ *   Cheat meals are the 2nd and 4th Sunday of the month, afternoon only.
  */
 
-import { addDays, dayOfWeek, monthOf, weekStart, type DateKey } from "./timezone";
-import type { BoardStats, Entry, HabitKey, StreakState, Tokens, WeekQuota } from "./types";
+import {
+  addDays,
+  cheatSundays,
+  dayOfWeek,
+  daysBetween,
+  daysLeftInMonth,
+  formatDayLabel,
+  isSunday,
+  monthRange,
+  nextCheatSunday,
+  weekStart,
+  type DateKey,
+} from "./timezone";
+import type {
+  Badge,
+  BoardStats,
+  CheatPlan,
+  Entry,
+  HabitKey,
+  MonthTarget,
+  Streak,
+  WeightPlan,
+} from "./types";
 
-export type EntryMap = Record<DateKey, Entry | undefined>;
+export type EntryMap = Record<DateKey, Entry>;
 
-// ---------------------------------------------------------------------------
-// Per-day predicates — the three streak conditions, in one place.
-// ---------------------------------------------------------------------------
-
-/** Any one of gym / walk / run satisfies the day. A rest token also covers it. */
-export function movementSatisfied(e?: Entry): boolean {
-  if (!e) return false;
-  return e.gymDone || e.walkDone || e.runDone || e.isRestDay;
-}
-
-/** Swim is its own commitment. Movement does not cover it. */
-export function swimSatisfied(e?: Entry): boolean {
-  if (!e) return false;
-  return e.swimDone || e.isRestDay;
-}
-
-/** A cheat token covers diet. A rest day does not — you still eat on a rest day. */
-export function dietSatisfied(e?: Entry): boolean {
-  if (!e) return false;
-  return e.dietDone || e.isCheatDay;
-}
-
-export const SATISFIED: Record<HabitKey, (e?: Entry) => boolean> = {
-  movement: movementSatisfied,
-  swim: swimSatisfied,
-  diet: dietSatisfied,
+export type StatsSettings = {
+  monthlySwimTarget: number;
+  monthlyGymTarget: number;
+  monthlyDietTarget: number;
+  startWeightKg: number;
+  goalWeightKg: number;
+  goalDate: DateKey;
+  startDate: DateKey;
 };
 
-/** Satisfied only because a token was spent — rendered in a muted tone, never as a miss. */
-export function satisfiedByToken(habit: HabitKey, e?: Entry): boolean {
-  if (!e || !SATISFIED[habit](e)) return false;
-  if (habit === "diet") return e.isCheatDay && !e.dietDone;
-  return e.isRestDay && !(habit === "swim" ? e.swimDone : e.gymDone || e.walkDone || e.runDone);
+/* ------------------------------------------------------------------ *
+ * The streak
+ * ------------------------------------------------------------------ */
+
+/** Did this day satisfy the streak? Sundays always do. */
+export function daySatisfied(entries: EntryMap, key: DateKey): boolean {
+  if (isSunday(key)) return true;
+  const e = entries[key];
+  if (!e) return false;
+  return e.dietDone && (e.swimDone || e.gymDone);
 }
 
-/** A day counts as logged if the tracker put anything at all in it. */
-export function isLogged(e?: Entry): boolean {
+/** Was anything at all logged? Drives "did I open the app" rendering. */
+export function dayLogged(entries: EntryMap, key: DateKey): boolean {
+  const e = entries[key];
   if (!e) return false;
   return (
-    e.gymDone ||
-    e.walkDone ||
-    e.runDone ||
     e.swimDone ||
+    e.gymDone ||
     e.dietDone ||
-    e.isRestDay ||
-    e.isCheatDay ||
     e.note !== null ||
     e.weightKg !== null ||
     e.hasPhoto
   );
 }
 
-/** Movement + swim + diet, all real, no tokens spent. The hardest thing the app asks for. */
-export function isPerfectDay(e?: Entry): boolean {
-  if (!e) return false;
-  return (
-    (e.gymDone || e.walkDone || e.runDone) &&
-    e.swimDone &&
-    e.dietDone &&
-    !e.isRestDay &&
-    !e.isCheatDay
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Streaks
-// ---------------------------------------------------------------------------
-
 /**
- * Consecutive satisfied days, counted backwards from yesterday, with today
- * added only if it is already satisfied.
- *
- * Today never breaks a streak. An unchecked today is `pending`, not a zero —
- * a streak read at 3pm must not say 0 just because the evening hasn't happened.
+ * Count back from `from` while days keep satisfying the rule.
+ * Bounded by `limit` so a corrupt map can't spin forever.
  */
-export function streak(habit: HabitKey, entries: EntryMap, today: DateKey): StreakState {
-  const ok = SATISFIED[habit];
-  let count = 0;
-
-  let cursor = addDays(today, -1);
-  // A guard rail, not a business rule: stop after ~5 years of history.
-  for (let i = 0; i < 2000; i++) {
-    if (!ok(entries[cursor])) break;
-    count++;
-    cursor = addDays(cursor, -1);
-  }
-
-  const todayOk = ok(entries[today]);
-  if (todayOk) count++;
-
-  return { count, pending: !todayOk };
-}
-
-/** Consecutive perfect days, same pending semantics as a habit streak. */
-export function perfectDayStreak(entries: EntryMap, today: DateKey): StreakState {
-  let count = 0;
-  let cursor = addDays(today, -1);
-  for (let i = 0; i < 2000; i++) {
-    if (!isPerfectDay(entries[cursor])) break;
-    count++;
-    cursor = addDays(cursor, -1);
-  }
-  const todayOk = isPerfectDay(entries[today]);
-  if (todayOk) count++;
-  return { count, pending: !todayOk };
-}
-
-// ---------------------------------------------------------------------------
-// Weekly quotas
-// ---------------------------------------------------------------------------
-
-function countInWeek(entries: EntryMap, monday: DateKey, pred: (e?: Entry) => boolean): number {
+function runLengthEndingAt(entries: EntryMap, from: DateKey, limit = 2000): number {
   let n = 0;
-  for (let i = 0; i < 7; i++) if (pred(entries[addDays(monday, i)])) n++;
+  let cursor = from;
+  while (n < limit && daySatisfied(entries, cursor)) {
+    n++;
+    cursor = addDays(cursor, -1);
+  }
   return n;
 }
 
 /**
- * Gym days this week against the target.
+ * The current streak.
  *
- * Walking and running satisfy the daily streak but deliberately do not count
- * here — they are what the remaining days are allowed to look like. Neither
- * does a rest day.
+ * Computed backwards from yesterday, then today is added only if it is already
+ * satisfied. A streak shown at 3pm must not read 0 because the evening has not
+ * happened yet — that is the difference between a tracker you keep and one you
+ * delete in week two.
  */
-export function gymQuota(entries: EntryMap, today: DateKey, target: number): WeekQuota {
-  const monday = weekStart(today);
-  const done = countInWeek(entries, monday, (e) => !!e?.gymDone);
-  const daysRemaining = 7 - dayOfWeek(today); // including today
-  const needed = Math.max(0, target - done);
+export function currentStreak(entries: EntryMap, today: DateKey): { count: number; pending: boolean } {
+  const throughYesterday = runLengthEndingAt(entries, addDays(today, -1));
+  const todayDone = daySatisfied(entries, today);
   return {
-    done,
-    target,
-    daysRemaining,
-    met: done >= target,
-    // The nudge that actually changes behaviour, and it has to appear
-    // while the week is still winnable.
-    noSlack: needed > 0 && needed >= daysRemaining,
+    count: throughYesterday + (todayDone ? 1 : 0),
+    pending: !todayDone,
   };
 }
 
-export function swimQuota(entries: EntryMap, today: DateKey, target: number): WeekQuota {
-  const monday = weekStart(today);
-  const done = countInWeek(entries, monday, (e) => !!e?.swimDone);
-  const daysRemaining = 7 - dayOfWeek(today);
-  const needed = Math.max(0, target - done);
-  return {
-    done,
-    target,
-    daysRemaining,
-    met: done >= target,
-    noSlack: needed > 0 && needed >= daysRemaining,
-  };
-}
-
-/** Consecutive fully-completed past weeks that met the gym target. */
-export function metWeekStreak(entries: EntryMap, today: DateKey, target: number): number {
-  let count = 0;
-  let monday = addDays(weekStart(today), -7); // start from last completed week
-  for (let i = 0; i < 260; i++) {
-    if (countInWeek(entries, monday, (e) => !!e?.gymDone) < target) break;
-    count++;
-    monday = addDays(monday, -7);
+/** Longest run ever recorded, scanning from `startDate` to today. */
+export function bestStreak(entries: EntryMap, today: DateKey, startDate: DateKey): number {
+  let best = 0;
+  let run = 0;
+  const span = Math.max(0, daysBetween(startDate, today));
+  for (let i = 0; i <= span; i++) {
+    const key = addDays(startDate, i);
+    // Today is still open, so it can neither extend nor break the record yet.
+    if (key === today && !daySatisfied(entries, key)) break;
+    if (daySatisfied(entries, key)) {
+      run++;
+      if (run > best) best = run;
+    } else {
+      run = 0;
+    }
   }
-  return count;
+  return best;
 }
 
-// ---------------------------------------------------------------------------
-// Tokens
-// ---------------------------------------------------------------------------
+/** Mon–Sun bars for the hero card, for the week containing `today`. */
+export function streakWeek(entries: EntryMap, today: DateKey): Streak["week"] {
+  const monday = weekStart(today);
+  const labels = ["M", "T", "W", "T", "F", "S", "S"];
+  return labels.map((label, i) => {
+    const date = addDays(monday, i);
+    return {
+      label,
+      date,
+      done: date <= today && daySatisfied(entries, date),
+      future: date > today,
+    };
+  });
+}
+
+export function buildStreak(entries: EntryMap, today: DateKey, startDate: DateKey): Streak {
+  const { count, pending } = currentStreak(entries, today);
+  return {
+    count,
+    pending,
+    best: Math.max(count, bestStreak(entries, today, startDate)),
+    week: streakWeek(entries, today),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Monthly targets
+ * ------------------------------------------------------------------ */
+
+/** Entry keys inside the calendar month containing `key`, up to and including today. */
+export function monthKeys(entries: EntryMap, key: DateKey, today: DateKey): DateKey[] {
+  const { start, end } = monthRange(key);
+  return Object.keys(entries).filter((k) => k >= start && k < end && k <= today);
+}
+
+export function countInMonth(entries: EntryMap, today: DateKey, habit: HabitKey): number {
+  const field = `${habit}Done` as const;
+  return monthKeys(entries, today, today).filter((k) => entries[k][field]).length;
+}
+
+export function buildMonthTargets(
+  entries: EntryMap,
+  today: DateKey,
+  s: StatsSettings,
+): MonthTarget[] {
+  const left = daysLeftInMonth(today);
+  const weeksLeft = Math.max(left / 7, 0.01);
+
+  const spec: { key: HabitKey; label: string; target: number }[] = [
+    { key: "swim", label: "Swim sessions", target: s.monthlySwimTarget },
+    { key: "gym", label: "Gym sessions", target: s.monthlyGymTarget },
+    { key: "diet", label: "Diet days on target", target: s.monthlyDietTarget },
+  ];
+
+  return spec.map(({ key, label, target }) => {
+    const done = countInMonth(entries, today, key);
+    const remaining = Math.max(target - done, 0);
+    const perWeek = remaining / weeksLeft;
+
+    let note: string;
+    if (remaining === 0) {
+      note = "Target met for the month";
+    } else if (remaining > left) {
+      note = `${remaining} to go · only ${left} day${left === 1 ? "" : "s"} left, out of reach`;
+    } else {
+      note = `${remaining} to go · ${perWeek.toFixed(1)} per week keeps you on track`;
+    }
+
+    return { key, label, done, target, pct: target === 0 ? 0 : Math.min(done / target, 1), note };
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * The weight plan
+ * ------------------------------------------------------------------ */
+
+/** Most recent logged weight, or the plan's starting weight if none yet. */
+export function currentWeight(entries: EntryMap, today: DateKey, fallback: number): number {
+  const keys = Object.keys(entries)
+    .filter((k) => k <= today && entries[k].weightKg !== null)
+    .sort();
+  const last = keys[keys.length - 1];
+  return last ? (entries[last].weightKg as number) : fallback;
+}
 
 /**
- * Remaining tokens are always derived, never stored. A counter can drift out of
- * sync with the entries; a count cannot.
+ * Back-calculate the plan.
+ *
+ * The straight line runs from (startDate, startKg) to (goalDate, goalKg), and
+ * each month's checkpoint is that line evaluated on the last day of the month.
+ * `perWeekNeeded` is recomputed from where you actually are today, so it rises
+ * if you fall behind rather than silently keeping the original promise.
  */
-export function tokens(
+export function buildWeightPlan(
   entries: EntryMap,
   today: DateKey,
-  total: number,
-  field: "isRestDay" | "isCheatDay",
-): Tokens {
-  const month = monthOf(today);
-  let used = 0;
-  for (const key of Object.keys(entries)) {
-    if (monthOf(key) === month && entries[key]?.[field]) used++;
+  s: StatsSettings,
+): WeightPlan {
+  const currentKg = currentWeight(entries, today, s.startWeightKg);
+  const totalDays = Math.max(daysBetween(s.startDate, s.goalDate), 1);
+  const perDayPlanned = (s.startWeightKg - s.goalWeightKg) / totalDays;
+
+  const checkpoints: WeightPlan["checkpoints"] = [];
+  let cursor = monthRange(today).start;
+  // Walk month by month to the goal, recording the last day of each.
+  for (let guard = 0; guard < 60; guard++) {
+    const { end } = monthRange(cursor);
+    const lastDay = addDays(end, -1);
+    const date = lastDay > s.goalDate ? s.goalDate : lastDay;
+    const elapsed = Math.min(Math.max(daysBetween(s.startDate, date), 0), totalDays);
+    checkpoints.push({
+      month: new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", month: "short" }).format(
+        new Date(`${date}T00:00:00.000Z`),
+      ),
+      date,
+      targetKg: Math.round((s.startWeightKg - perDayPlanned * elapsed) * 10) / 10,
+    });
+    if (date >= s.goalDate) break;
+    cursor = end;
   }
-  return { used, total, left: Math.max(0, total - used) };
-}
 
-// ---------------------------------------------------------------------------
-// Everything the board header needs, in one pass.
-// ---------------------------------------------------------------------------
+  const daysToGoal = Math.max(daysBetween(today, s.goalDate), 0);
+  const weeksToGoal = Math.max(daysToGoal / 7, 0.01);
+  const toGoKg = Math.max(currentKg - s.goalWeightKg, 0);
+  const span = s.startWeightKg - s.goalWeightKg;
 
-export function computeStats(
-  entries: EntryMap,
-  today: DateKey,
-  settings: {
-    weeklyGymTarget: number;
-    weeklySwimTarget: number;
-    monthlyRestTokens: number;
-    monthlyCheatTokens: number;
-  },
-): BoardStats {
   return {
-    today,
-    streaks: {
-      movement: streak("movement", entries, today),
-      swim: streak("swim", entries, today),
-      diet: streak("diet", entries, today),
-    },
-    gymWeek: gymQuota(entries, today, settings.weeklyGymTarget),
-    swimWeek: swimQuota(entries, today, settings.weeklySwimTarget),
-    metWeekStreak: metWeekStreak(entries, today, settings.weeklyGymTarget),
-    rest: tokens(entries, today, settings.monthlyRestTokens, "isRestDay"),
-    cheat: tokens(entries, today, settings.monthlyCheatTokens, "isCheatDay"),
+    startKg: s.startWeightKg,
+    goalKg: s.goalWeightKg,
+    currentKg: Math.round(currentKg * 10) / 10,
+    goalDate: s.goalDate,
+    lostKg: Math.round((s.startWeightKg - currentKg) * 10) / 10,
+    toGoKg: Math.round(toGoKg * 10) / 10,
+    pct: span <= 0 ? 1 : Math.min(Math.max((s.startWeightKg - currentKg) / span, 0), 1),
+    perWeekNeeded: Math.round((toGoKg / weeksToGoal) * 100) / 100,
+    daysToGoal,
+    checkpoints,
+    nextCheckpoint: checkpoints[0] ?? null,
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * Cheat meals
+ * ------------------------------------------------------------------ */
+
+function relativeDayLabel(from: DateKey, to: DateKey): string {
+  const n = daysBetween(from, to);
+  if (n === 0) return "Today";
+  if (n === 1) return "Tomorrow";
+  if (n < 0) return `${Math.abs(n)} days ago`;
+  return `in ${n} days`;
+}
+
+export function buildCheatPlan(today: DateKey): CheatPlan {
+  // "2nd of 2 this month" is the one that should make you think twice, so the
+  // ordinal is part of the label rather than something you have to count.
+  const all = cheatSundays(today);
+  const slots = all.map((date, i) => ({
+    date,
+    label: formatDayLabel(date),
+    state:
+      date < today
+        ? "Used"
+        : `${i + 1}${i === 0 ? "st" : "nd"} of ${all.length} this month`,
+    past: date < today,
+  }));
+
+  const next = nextCheatSunday(today);
+  return {
+    slots,
+    next,
+    nextLabel: formatDayLabel(next),
+    whenLabel: relativeDayLabel(today, next),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Badges
+ * ------------------------------------------------------------------ */
+
+const BADGE_SPEC: Omit<Badge, "earned">[] = [
+  { id: "swim_1", name: "First Splash", description: "Log your first swim", habit: "swim", letter: "S" },
+  { id: "gym_1", name: "First Rep", description: "Log your first gym session", habit: "gym", letter: "G" },
+  { id: "diet_1", name: "Clean Plate", description: "First diet day on target", habit: "diet", letter: "D" },
+  { id: "streak_7", name: "Week One", description: "7-day streak", habit: "streak", letter: "7" },
+  { id: "streak_14", name: "Fortnight", description: "14-day streak", habit: "streak", letter: "14" },
+  { id: "streak_30", name: "Month Strong", description: "30-day streak", habit: "streak", letter: "30" },
+  { id: "streak_100", name: "Century", description: "100-day streak", habit: "streak", letter: "100" },
+  { id: "swim_25", name: "Open Water", description: "25 swim sessions", habit: "swim", letter: "25" },
+  { id: "gym_50", name: "Iron Habit", description: "50 gym sessions", habit: "gym", letter: "50" },
+  { id: "perfect_7", name: "Perfect Week", description: "7 days with all three logged", habit: "streak", letter: "P" },
+  { id: "weight_2", name: "First Two", description: "2 kg down from the start", habit: "weight", letter: "2" },
+  { id: "weight_half", name: "Halfway", description: "Halfway to your goal weight", habit: "weight", letter: "½" },
+];
+
+/** Longest run of days where all three were logged. */
+export function longestPerfectRun(entries: EntryMap, today: DateKey, startDate: DateKey): number {
+  let best = 0;
+  let run = 0;
+  const span = Math.max(0, daysBetween(startDate, today));
+  for (let i = 0; i <= span; i++) {
+    const e = entries[addDays(startDate, i)];
+    if (e && e.swimDone && e.gymDone && e.dietDone) {
+      run++;
+      if (run > best) best = run;
+    } else {
+      run = 0;
+    }
+  }
+  return best;
+}
+
+export function buildBadges(
+  entries: EntryMap,
+  today: DateKey,
+  s: StatsSettings,
+  totals: { swim: number; gym: number; diet: number },
+  streak: Streak,
+  weight: WeightPlan,
+): Badge[] {
+  const perfect = longestPerfectRun(entries, today, s.startDate);
+  const span = s.startWeightKg - s.goalWeightKg;
+
+  const earned: Record<string, boolean> = {
+    swim_1: totals.swim >= 1,
+    gym_1: totals.gym >= 1,
+    diet_1: totals.diet >= 1,
+    streak_7: streak.best >= 7,
+    streak_14: streak.best >= 14,
+    streak_30: streak.best >= 30,
+    streak_100: streak.best >= 100,
+    swim_25: totals.swim >= 25,
+    gym_50: totals.gym >= 50,
+    perfect_7: perfect >= 7,
+    weight_2: weight.lostKg >= 2,
+    weight_half: span > 0 && weight.lostKg >= span / 2,
+  };
+
+  return BADGE_SPEC.map((b) => ({ ...b, earned: earned[b.id] ?? false }));
+}
+
+/* ------------------------------------------------------------------ *
+ * Calendar heat
+ * ------------------------------------------------------------------ */
+
+/** 0–3: how many of swim / gym / diet were logged that day. */
+export function heatLevel(entries: EntryMap, key: DateKey): 0 | 1 | 2 | 3 {
+  const e = entries[key];
+  if (!e) return 0;
+  return (Number(e.swimDone) + Number(e.gymDone) + Number(e.dietDone)) as 0 | 1 | 2 | 3;
+}
+
+/* ------------------------------------------------------------------ *
+ * Everything at once
+ * ------------------------------------------------------------------ */
+
+export function computeStats(entries: EntryMap, today: DateKey, s: StatsSettings): BoardStats {
+  const all = Object.keys(entries).filter((k) => k <= today);
+  const totals = {
+    swim: all.filter((k) => entries[k].swimDone).length,
+    gym: all.filter((k) => entries[k].gymDone).length,
+    diet: all.filter((k) => entries[k].dietDone).length,
+    sessions: 0,
+  };
+  totals.sessions = totals.swim + totals.gym;
+
+  const streak = buildStreak(entries, today, s.startDate);
+  const weight = buildWeightPlan(entries, today, s);
+  const badges = buildBadges(entries, today, s, totals, streak, weight);
+
+  return {
+    today,
+    streak,
+    monthTargets: buildMonthTargets(entries, today, s),
+    daysLeftInMonth: daysLeftInMonth(today),
+    monthLabel: new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", month: "long" }).format(
+      new Date(`${today}T00:00:00.000Z`),
+    ),
+    weight,
+    cheat: buildCheatPlan(today),
+    isRestToday: isSunday(today),
+    totals,
+    badges,
+    badgesEarned: badges.filter((b) => b.earned).length,
+  };
+}
+
+// Re-exported so components don't reach into timezone.ts for one helper.
+export { dayOfWeek };

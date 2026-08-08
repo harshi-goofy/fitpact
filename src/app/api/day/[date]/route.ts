@@ -1,23 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getTracker, loadBoard } from "@/lib/board";
-import { isEditable, keyToDate, monthRange, todayKey } from "@/lib/timezone";
+import { isEditable, keyToDate, todayKey } from "@/lib/timezone";
 
 export const dynamic = "force-dynamic";
 
-const BOOLEAN_FIELDS = [
-  "gymDone",
-  "walkDone",
-  "runDone",
-  "swimDone",
-  "dietDone",
-  "isRestDay",
-  "isCheatDay",
-] as const;
-
+const BOOLEAN_FIELDS = ["swimDone", "gymDone", "dietDone"] as const;
 type BooleanField = (typeof BOOLEAN_FIELDS)[number];
 
-/** The only fields this route will ever write. */
 type DayPatch = Partial<Record<BooleanField, boolean>> & {
   note?: string | null;
   weightKg?: number | null;
@@ -28,8 +18,10 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /**
  * Partial update of one day.
  *
- * Everything the UI enforces is re-enforced here. Disabling a button is a
- * courtesy; this route is the actual rule.
+ * Everything the UI enforces is re-enforced here. Disabling a control is a
+ * courtesy; this route is the actual rule. There are no token budgets to check
+ * any more — rest and cheat days are calendar facts, so there is nothing a
+ * client could overspend.
  */
 export async function PATCH(req: Request, ctx: { params: Promise<{ date: string }> }) {
   const { date } = await ctx.params;
@@ -40,10 +32,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ date: string 
 
   const settings = await prisma.settings.findUnique({ where: { id: "singleton" } });
   const tz = settings?.timezone ?? process.env.APP_TIMEZONE ?? "Asia/Kolkata";
-  const today = todayKey(tz);
 
   // Today and yesterday only. Older days are history, not a draft.
-  if (!isEditable(date, today)) {
+  if (!isEditable(date, todayKey(tz))) {
     return NextResponse.json(
       { error: "That day is locked. Only today and yesterday can be edited." },
       { status: 403 },
@@ -57,17 +48,14 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ date: string 
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  // Typed rather than Record<string, unknown>, so Prisma actually checks the
-  // update and create payloads below instead of silently accepting anything.
   const data: DayPatch = {};
 
   for (const field of BOOLEAN_FIELDS) {
     if (field in body) {
-      const value = body[field];
-      if (typeof value !== "boolean") {
+      if (typeof body[field] !== "boolean") {
         return NextResponse.json({ error: `${field} must be a boolean` }, { status: 400 });
       }
-      data[field] = value;
+      data[field] = body[field] as boolean;
     }
   }
 
@@ -88,7 +76,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ date: string 
       if (!Number.isFinite(n) || n <= 0 || n > 500) {
         return NextResponse.json({ error: "weightKg must be between 0 and 500" }, { status: 400 });
       }
-      data.weightKg = Math.round(n * 10) / 10; // one decimal place
+      data.weightKg = Math.round(n * 10) / 10;
     }
   }
 
@@ -97,50 +85,16 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ date: string 
   }
 
   const tracker = await getTracker();
-  const dateValue = keyToDate(date);
-
-  const existing = await prisma.dayEntry.findUnique({
-    where: { userId_date: { userId: tracker.id, date: dateValue } },
-  });
-
-  // Token budgets. Spending is only blocked when this edit is what would
-  // overspend — un-marking always works, and re-saving an already-marked day
-  // must not be treated as spending a second token.
-  const budgetChecks = [
-    { field: "isRestDay", total: settings?.monthlyRestTokens ?? 4, label: "rest days" },
-    { field: "isCheatDay", total: settings?.monthlyCheatTokens ?? 4, label: "cheat days" },
-  ] as const;
-
-  const { start, end } = monthRange(date);
-
-  for (const { field, total, label } of budgetChecks) {
-    const turningOn = data[field] === true && !existing?.[field];
-    if (!turningOn) continue;
-
-    const used = await prisma.dayEntry.count({
-      where: {
-        userId: tracker.id,
-        // Spelled out rather than computed, so Prisma's generated types can
-        // still check the field name.
-        ...(field === "isRestDay" ? { isRestDay: true } : { isCheatDay: true }),
-        date: { gte: keyToDate(start), lt: keyToDate(end) },
-      },
-    });
-
-    if (used >= total) {
-      return NextResponse.json({ error: `No ${label} left this month.` }, { status: 409 });
-    }
-  }
 
   // Upsert on the unique (userId, date) pair, so a double-tap can never
   // produce two rows for the same day.
   await prisma.dayEntry.upsert({
-    where: { userId_date: { userId: tracker.id, date: dateValue } },
+    where: { userId_date: { userId: tracker.id, date: keyToDate(date) } },
     update: data,
-    create: { userId: tracker.id, date: dateValue, ...data },
+    create: { userId: tracker.id, date: keyToDate(date), ...data },
   });
 
-  // Return the whole board: streaks and quotas may have changed in ways the
-  // client can't derive from a single toggle, and one round trip beats two.
-  return NextResponse.json(await loadBoard(90));
+  // Return the whole board: the streak and month targets may have moved in
+  // ways the client can't derive from one toggle.
+  return NextResponse.json(await loadBoard());
 }

@@ -1,201 +1,316 @@
 /**
- * Checks on the rules that are easy to get subtly wrong.
- * Run with: npx tsx src/lib/stats.test.ts
+ * Unit tests for the rules. Run: npx tsx src/lib/stats.test.ts
+ *
+ * No test framework on purpose — these are pure functions over plain objects,
+ * and one dependency-free file that either prints "all passed" or throws is
+ * worth more here than a runner nobody will configure.
  */
 
-import assert from "node:assert";
-import { computeStats, gymQuota, streak, tokens } from "./stats";
-import { addDays, isEditable, monthRange, weekStart } from "./timezone";
-import { EMPTY_ENTRY, type Entry } from "./types";
+import {
+  buildCheatPlan,
+  buildMonthTargets,
+  buildWeightPlan,
+  bestStreak,
+  currentStreak,
+  daySatisfied,
+  heatLevel,
+  longestPerfectRun,
+  streakWeek,
+  type EntryMap,
+  type StatsSettings,
+} from "./stats";
+import { cheatSundays, isSunday, nextCheatSunday, sundaysInMonth } from "./timezone";
+import type { Entry } from "./types";
 
-const TODAY = "2026-08-08"; // a Saturday
-
-function entry(date: string, patch: Partial<Entry>): Entry {
-  return { ...EMPTY_ENTRY(date), ...patch };
-}
-
-function map(...es: Entry[]): Record<string, Entry> {
-  return Object.fromEntries(es.map((e) => [e.date, e]));
-}
-
-const SETTINGS = {
-  weeklyGymTarget: 5,
-  weeklySwimTarget: 7,
-  monthlyRestTokens: 4,
-  monthlyCheatTokens: 4,
-};
+/* ---- tiny harness ------------------------------------------------- */
 
 let passed = 0;
-function test(name: string, fn: () => void) {
+const failures: string[] = [];
+
+function check(name: string, fn: () => void) {
   try {
     fn();
     passed++;
-    console.log(`  ✓ ${name}`);
   } catch (e) {
-    console.error(`  ✗ ${name}\n    ${e instanceof Error ? e.message : e}`);
-    process.exitCode = 1;
+    failures.push(`${name}\n    ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
-console.log("\nstreaks");
+function eq<T>(actual: T, expected: T, msg = "") {
+  const a = JSON.stringify(actual);
+  const b = JSON.stringify(expected);
+  if (a !== b) throw new Error(`${msg} expected ${b}, got ${a}`);
+}
 
-test("an unchecked today is pending, not a break", () => {
-  const entries = map(
-    entry(addDays(TODAY, -1), { gymDone: true }),
-    entry(addDays(TODAY, -2), { walkDone: true }),
-  );
-  const s = streak("movement", entries, TODAY);
-  assert.equal(s.count, 2, "should count through yesterday");
-  assert.equal(s.pending, true, "today is undecided, not zero");
+/* ---- fixtures ------------------------------------------------------ */
+
+/** "sgd" -> swim+gym+diet, "d" -> diet only, "" -> logged but nothing done. */
+function entry(date: string, flags: string): Entry {
+  return {
+    date,
+    swimDone: flags.includes("s"),
+    gymDone: flags.includes("g"),
+    dietDone: flags.includes("d"),
+    note: null,
+    weightKg: null,
+    hasPhoto: false,
+  };
+}
+
+function map(spec: Record<string, string>): EntryMap {
+  const out: EntryMap = {};
+  for (const [date, flags] of Object.entries(spec)) out[date] = entry(date, flags);
+  return out;
+}
+
+const SETTINGS: StatsSettings = {
+  monthlySwimTarget: 16,
+  monthlyGymTarget: 20,
+  monthlyDietTarget: 28,
+  startWeightKg: 88,
+  goalWeightKg: 78,
+  goalDate: "2027-01-01",
+  startDate: "2026-08-08",
+};
+
+/* ---- calendar facts ------------------------------------------------ */
+// Aug 2026 Sundays: 2, 9, 16, 23, 30. Aug 8 2026 is a Saturday.
+
+check("Sunday detection", () => {
+  eq(isSunday("2026-08-09"), true, "9 Aug is a Sunday.");
+  eq(isSunday("2026-08-08"), false, "8 Aug is a Saturday.");
 });
 
-test("today counts once it is satisfied", () => {
-  const entries = map(
-    entry(TODAY, { runDone: true }),
-    entry(addDays(TODAY, -1), { gymDone: true }),
-  );
-  const s = streak("movement", entries, TODAY);
-  assert.equal(s.count, 2);
-  assert.equal(s.pending, false);
+check("all Sundays in the month", () => {
+  eq(sundaysInMonth("2026-08-08"), [
+    "2026-08-02",
+    "2026-08-09",
+    "2026-08-16",
+    "2026-08-23",
+    "2026-08-30",
+  ]);
 });
 
-test("a missed yesterday breaks the streak to 0", () => {
-  const entries = map(entry(addDays(TODAY, -2), { gymDone: true }));
-  assert.equal(streak("movement", entries, TODAY).count, 0);
+check("cheat days are the 2nd and 4th Sunday — exactly two", () => {
+  eq(cheatSundays("2026-08-08"), ["2026-08-09", "2026-08-23"]);
+  // February 2027 starts on a Monday and has only four Sundays; still two.
+  eq(cheatSundays("2027-02-01").length, 2);
 });
 
-test("streaks are independent — a swim miss leaves movement alone", () => {
-  const entries = map(
-    entry(addDays(TODAY, -1), { gymDone: true, swimDone: false }),
-    entry(addDays(TODAY, -2), { gymDone: true, swimDone: true }),
-  );
-  assert.equal(streak("movement", entries, TODAY).count, 2);
-  assert.equal(streak("swim", entries, TODAY).count, 0);
+check("next cheat Sunday rolls into next month when the month is spent", () => {
+  eq(nextCheatSunday("2026-08-08"), "2026-08-09", "before the first.");
+  eq(nextCheatSunday("2026-08-23"), "2026-08-23", "on the day itself.");
+  eq(nextCheatSunday("2026-08-24"), "2026-09-13", "after both — 2nd Sunday of Sept.");
 });
 
-test("a rest day preserves both movement and swim, but not diet", () => {
-  const entries = map(entry(addDays(TODAY, -1), { isRestDay: true }));
-  assert.equal(streak("movement", entries, TODAY).count, 1);
-  assert.equal(streak("swim", entries, TODAY).count, 1);
-  assert.equal(streak("diet", entries, TODAY).count, 0, "you still eat on a rest day");
+check("cheat plan labels the next one relatively", () => {
+  eq(buildCheatPlan("2026-08-08").whenLabel, "Tomorrow");
+  eq(buildCheatPlan("2026-08-09").whenLabel, "Today");
+  eq(buildCheatPlan("2026-08-10").whenLabel, "in 13 days");
+  eq(buildCheatPlan("2026-08-08").slots.length, 2);
 });
 
-test("a cheat day preserves diet only", () => {
-  const entries = map(entry(addDays(TODAY, -1), { isCheatDay: true }));
-  assert.equal(streak("diet", entries, TODAY).count, 1);
-  assert.equal(streak("movement", entries, TODAY).count, 0);
+/* ---- the streak rule ----------------------------------------------- */
+
+check("a day needs diet AND (swim OR gym)", () => {
+  const e = map({
+    "2026-08-03": "sgd", // all three
+    "2026-08-04": "sd", // swim + diet
+    "2026-08-05": "gd", // gym + diet
+    "2026-08-06": "d", // diet only — not enough
+    "2026-08-07": "sg", // no diet — not enough
+  });
+  eq(daySatisfied(e, "2026-08-03"), true, "all three.");
+  eq(daySatisfied(e, "2026-08-04"), true, "swim+diet.");
+  eq(daySatisfied(e, "2026-08-05"), true, "gym+diet.");
+  eq(daySatisfied(e, "2026-08-06"), false, "diet alone.");
+  eq(daySatisfied(e, "2026-08-07"), false, "activity without diet.");
 });
 
-test("swimming does not satisfy movement, and vice versa", () => {
-  const swimOnly = map(entry(addDays(TODAY, -1), { swimDone: true }));
-  assert.equal(streak("movement", swimOnly, TODAY).count, 0);
-  const gymOnly = map(entry(addDays(TODAY, -1), { gymDone: true }));
-  assert.equal(streak("swim", gymOnly, TODAY).count, 0);
+check("every Sunday is a rest day and satisfies itself", () => {
+  const e = map({}); // nothing logged at all
+  eq(daySatisfied(e, "2026-08-09"), true, "empty Sunday.");
+  eq(daySatisfied(e, "2026-08-10"), false, "empty Monday.");
 });
 
-console.log("\nweekly gym quota");
-
-test("walks and runs do not count toward the gym quota", () => {
-  const monday = weekStart(TODAY);
-  const entries = map(
-    entry(monday, { gymDone: true }),
-    entry(addDays(monday, 1), { walkDone: true }),
-    entry(addDays(monday, 2), { runDone: true }),
-  );
-  assert.equal(gymQuota(entries, TODAY, 5).done, 1);
+check("a missing day breaks the run behind it", () => {
+  // The 6th is missing, so the run can only reach back as far as the 7th.
+  const e = map({ "2026-08-05": "sgd", "2026-08-07": "sgd" });
+  eq(currentStreak(e, "2026-08-08"), { count: 1, pending: true }, "yesterday only.");
+  // And once the gap is yesterday too, there is nothing left to count.
+  eq(currentStreak(map({ "2026-08-05": "sgd" }), "2026-08-08"), { count: 0, pending: true });
 });
 
-test("a rest day does not count toward the gym quota", () => {
-  const monday = weekStart(TODAY);
-  const entries = map(entry(monday, { isRestDay: true }));
-  assert.equal(gymQuota(entries, TODAY, 5).done, 0);
+/* ---- today is never a break ---------------------------------------- */
+
+check("an unchecked today is pending, not zero", () => {
+  const e = map({ "2026-08-05": "sgd", "2026-08-06": "sgd", "2026-08-07": "sgd" });
+  const s = currentStreak(e, "2026-08-08");
+  eq(s.count, 3, "the three completed days still count.");
+  eq(s.pending, true, "and today is flagged as still open.");
 });
 
-test("noSlack fires when gym days needed >= days left", () => {
-  // Saturday: Sat + Sun remain. 3 done, 5 needed -> 2 needed, 2 left.
-  const monday = weekStart(TODAY);
-  const entries = map(
-    entry(monday, { gymDone: true }),
-    entry(addDays(monday, 1), { gymDone: true }),
-    entry(addDays(monday, 2), { gymDone: true }),
-  );
-  const q = gymQuota(entries, TODAY, 5);
-  assert.equal(q.daysRemaining, 2);
-  assert.equal(q.noSlack, true);
+check("today extends the streak the moment it qualifies", () => {
+  const e = map({ "2026-08-07": "sgd", "2026-08-08": "sgd" });
+  eq(currentStreak(e, "2026-08-08"), { count: 2, pending: false });
 });
 
-test("noSlack is off when the week still has slack", () => {
-  const monday = weekStart(TODAY);
-  const entries = map(
-    entry(monday, { gymDone: true }),
-    entry(addDays(monday, 1), { gymDone: true }),
-    entry(addDays(monday, 2), { gymDone: true }),
-    entry(addDays(monday, 3), { gymDone: true }),
-  );
-  assert.equal(gymQuota(entries, TODAY, 5).noSlack, false);
+check("a half-logged today does not count yet", () => {
+  const e = map({ "2026-08-07": "sgd", "2026-08-08": "s" });
+  eq(currentStreak(e, "2026-08-08"), { count: 1, pending: true }, "swim without diet.");
 });
 
-test("a met week never shows noSlack", () => {
-  const monday = weekStart(TODAY);
-  const entries = map(
-    ...Array.from({ length: 5 }, (_, i) => entry(addDays(monday, i), { gymDone: true })),
-  );
-  const q = gymQuota(entries, TODAY, 5);
-  assert.equal(q.met, true);
-  assert.equal(q.noSlack, false);
+/* ---- Sundays inside a run ------------------------------------------ */
+
+check("a rest Sunday bridges two active weeks", () => {
+  const e = map({
+    "2026-08-07": "sgd", // Fri
+    "2026-08-08": "sgd", // Sat
+    // 9th is Sunday, nothing logged — free
+    "2026-08-10": "sgd", // Mon
+  });
+  eq(currentStreak(e, "2026-08-10").count, 4, "Fri, Sat, free Sunday, Mon.");
 });
 
-console.log("\ntokens");
+/* ---- best streak --------------------------------------------------- */
 
-test("tokens are derived from entries and scoped to the month", () => {
-  const entries = map(
-    entry("2026-08-02", { isRestDay: true }),
-    entry("2026-08-03", { isRestDay: true }),
-    entry("2026-07-31", { isRestDay: true }), // last month, must not count
-  );
-  const t = tokens(entries, TODAY, 4, "isRestDay");
-  assert.equal(t.used, 2);
-  assert.equal(t.left, 2);
+check("best streak is the longest run ever, not the current one", () => {
+  const e = map({
+    "2026-08-08": "sgd",
+    "2026-08-10": "sgd",
+    "2026-08-11": "sgd",
+    "2026-08-12": "sgd",
+    // 13th missed, breaking it
+    "2026-08-14": "sgd",
+  });
+  // 8th + free Sunday 9th + 10th,11th,12th = 5
+  eq(bestStreak(e, "2026-08-14", "2026-08-08"), 5);
 });
 
-test("token count never goes negative", () => {
-  const entries = map(
-    ...Array.from({ length: 6 }, (_, i) =>
-      entry(`2026-08-${String(i + 1).padStart(2, "0")}`, { isCheatDay: true }),
-    ),
-  );
-  assert.equal(tokens(entries, TODAY, 4, "isCheatDay").left, 0);
+check("an open today can't set a record on its own", () => {
+  const e = map({ "2026-08-08": "sgd" });
+  eq(bestStreak(e, "2026-08-12", "2026-08-08"), 2, "8th + free Sunday, then it stops.");
 });
 
-test("month range rolls over December correctly", () => {
-  assert.deepEqual(monthRange("2026-12-15"), { start: "2026-12-01", end: "2027-01-01" });
-  assert.deepEqual(monthRange("2026-08-08"), { start: "2026-08-01", end: "2026-09-01" });
+/* ---- week strip ---------------------------------------------------- */
+
+check("week strip is Mon–Sun and marks the future", () => {
+  const w = streakWeek(map({ "2026-08-03": "sgd" }), "2026-08-05");
+  eq(w.length, 7);
+  eq(w[0].date, "2026-08-03", "Monday first.");
+  eq(w[6].date, "2026-08-09", "Sunday last.");
+  eq(w[0].done, true);
+  eq(w[1].done, false, "Tuesday empty.");
+  eq(w[5].future, true, "Saturday is ahead of Wednesday.");
+  eq(w[6].done, false, "a future Sunday is not yet 'done'.");
 });
 
-console.log("\nedit window");
+/* ---- monthly targets ------------------------------------------------ */
 
-test("today and yesterday are editable, older days are not", () => {
-  assert.equal(isEditable(TODAY, TODAY), true);
-  assert.equal(isEditable(addDays(TODAY, -1), TODAY), true);
-  assert.equal(isEditable(addDays(TODAY, -2), TODAY), false);
+check("month targets count only this month, only up to today", () => {
+  const e = map({
+    "2026-07-30": "sgd", // last month
+    "2026-08-02": "sgd",
+    "2026-08-03": "sg",
+    "2026-08-20": "sgd", // future
+  });
+  const t = buildMonthTargets(e, "2026-08-08", SETTINGS);
+  eq(t[0].done, 2, "swim: 2 and 3 Aug.");
+  eq(t[1].done, 2, "gym: 2 and 3 Aug.");
+  eq(t[2].done, 1, "diet: 2 Aug only.");
+  eq(t[1].target, 20);
 });
 
-test("weeks run Monday to Sunday", () => {
-  assert.equal(weekStart("2026-08-08"), "2026-08-03"); // Sat -> Mon
-  assert.equal(weekStart("2026-08-09"), "2026-08-03"); // Sun -> same Mon
-  assert.equal(weekStart("2026-08-10"), "2026-08-10"); // Mon -> itself
+check("month targets warn when the maths stops working", () => {
+  const t = buildMonthTargets(map({}), "2026-08-30", SETTINGS);
+  // 2 days left, 16 swims needed.
+  eq(t[0].note.includes("out of reach"), true, t[0].note);
 });
 
-console.log("\nintegration");
-
-test("computeStats returns all three streaks plus quotas", () => {
-  const entries = map(entry(addDays(TODAY, -1), { gymDone: true, swimDone: true, dietDone: true }));
-  const s = computeStats(entries, TODAY, SETTINGS);
-  assert.equal(s.streaks.movement.count, 1);
-  assert.equal(s.streaks.swim.count, 1);
-  assert.equal(s.streaks.diet.count, 1);
-  assert.equal(s.rest.left, 4);
-  assert.equal(s.today, TODAY);
+check("a met target says so instead of showing a pace", () => {
+  const e: EntryMap = {};
+  for (let d = 1; d <= 16; d++) {
+    const k = `2026-08-${String(d).padStart(2, "0")}`;
+    e[k] = entry(k, "s");
+  }
+  eq(buildMonthTargets(e, "2026-08-20", SETTINGS)[0].note, "Target met for the month");
 });
 
-console.log(`\n${passed} passed\n`);
+/* ---- the weight plan ------------------------------------------------ */
+
+check("weight plan back-calculates a sane weekly pace", () => {
+  const w = buildWeightPlan(map({}), "2026-08-08", SETTINGS);
+  eq(w.currentKg, 88, "no weight logged yet — falls back to the start weight.");
+  eq(w.toGoKg, 10);
+  eq(w.daysToGoal, 146);
+  eq(w.perWeekNeeded, 0.48, "10 kg over 146 days.");
+});
+
+check("checkpoints land on month ends and finish exactly on goal", () => {
+  const w = buildWeightPlan(map({}), "2026-08-08", SETTINGS);
+  eq(w.checkpoints[0], { month: "Aug", date: "2026-08-31", targetKg: 86.4 });
+  eq(w.checkpoints[1].targetKg, 84.4, "end of Sept.");
+  const last = w.checkpoints[w.checkpoints.length - 1];
+  eq(last.date, "2027-01-01");
+  eq(last.targetKg, 78, "the line arrives exactly on the goal.");
+});
+
+check("the pace rises if you fall behind", () => {
+  const e = map({ "2026-11-01": "" });
+  e["2026-11-01"].weightKg = 86;
+  const w = buildWeightPlan(e, "2026-11-01", SETTINGS);
+  eq(w.currentKg, 86);
+  eq(w.lostKg, 2);
+  eq(w.perWeekNeeded > 0.48, true, `8 kg in 61 days should exceed the original pace, got ${w.perWeekNeeded}`);
+});
+
+check("weight progress is clamped and survives a gain", () => {
+  const e = map({ "2026-08-08": "" });
+  e["2026-08-08"].weightKg = 90; // heavier than the start
+  const w = buildWeightPlan(e, "2026-08-08", SETTINGS);
+  eq(w.lostKg, -2);
+  eq(w.pct, 0, "never negative.");
+  eq(w.toGoKg, 12);
+});
+
+/* ---- calendar heat and perfect days --------------------------------- */
+
+check("heat level counts the three habits", () => {
+  const e = map({ "2026-08-01": "", "2026-08-02": "s", "2026-08-03": "sg", "2026-08-04": "sgd" });
+  eq(heatLevel(e, "2026-08-01"), 0);
+  eq(heatLevel(e, "2026-08-02"), 1);
+  eq(heatLevel(e, "2026-08-03"), 2);
+  eq(heatLevel(e, "2026-08-04"), 3);
+  eq(heatLevel(e, "2026-08-05"), 0, "a day with no row at all.");
+});
+
+check("a perfect run needs all three every day — Sundays included", () => {
+  const e: EntryMap = {};
+  for (let d = 1; d <= 7; d++) {
+    const k = `2026-08-${String(d).padStart(2, "0")}`;
+    e[k] = entry(k, "sgd");
+  }
+  eq(longestPerfectRun(e, "2026-08-07", "2026-08-01"), 7, "Sundays don't come free here.");
+  e["2026-08-04"] = entry("2026-08-04", "sg");
+  eq(longestPerfectRun(e, "2026-08-07", "2026-08-01"), 3, "broken on the 4th.");
+});
+
+/* ---- year boundary --------------------------------------------------- */
+
+check("a streak survives Dec into Jan", () => {
+  const e = map({
+    "2026-12-30": "sgd",
+    "2026-12-31": "sgd",
+    "2027-01-01": "sgd",
+  });
+  eq(currentStreak(e, "2027-01-01").count, 3);
+});
+
+/* ---- report ---------------------------------------------------------- */
+
+if (failures.length > 0) {
+  console.error(`\n${failures.length} failed, ${passed} passed:\n`);
+  for (const f of failures) console.error(`  ✗ ${f}\n`);
+  process.exit(1);
+}
+console.log(`✓ all ${passed} tests passed`);

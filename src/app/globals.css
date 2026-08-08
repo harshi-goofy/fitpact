@@ -1,31 +1,37 @@
 @import "tailwindcss";
 
 /*
- * One hue per habit, reused everywhere — check-in groups, calendar slivers,
- * stat header, and later the recap email. The whole point of the calendar is
- * that a column of gaps reads instantly as "swimming is the problem", and that
- * only works if the colour never moves.
+ * Design tokens from the Fitness Tracker handoff.
  *
- * Token-satisfied days use the -muted variant: a dimmer version of the SAME
- * hue, never a failure colour. A rest day is a day the plan worked.
+ * One hue per habit, reused everywhere — quick-log tiles, calendar heat, month
+ * targets, badges. The calendar only works if a colour never moves position or
+ * meaning, so these are the single source for all three.
  */
 @theme {
-  --color-ink: #0a0a0c;
-  --color-surface: #141418;
-  --color-surface-2: #1d1d23;
-  --color-line: #2a2a32;
-  --color-text: #ededf0;
-  --color-muted: #8a8a96;
+  --color-screen: #0b0d0c;
+  --color-card: #151814;
+  --color-line: #262a22;
+  --color-line-hover: #3a4034;
 
-  --color-movement: #f59e0b;
-  --color-movement-muted: #7a5410;
-  --color-swim: #38bdf8;
-  --color-swim-muted: #1c5c7a;
-  --color-diet: #4ade80;
-  --color-diet-muted: #226b41;
+  --color-text: #f2f4ef;
+  --color-text-2: #a8b09c;
+  --color-muted: #7c8474;
+  --color-faint: #6a7263;
 
-  --color-empty: #26262e;
-  --color-warn: #f87171;
+  --color-lime: #c8f542;
+  --color-lime-hover: #dcff7a;
+  --color-on-lime: #12150f;
+
+  --color-swim: #5ad9ff;
+  --color-gym: #c8f542;
+  --color-diet: #ffb45c;
+
+  --color-heat-0: #22261f;
+  --color-heat-1: #3f5b1a;
+  --color-heat-2: #8ab52c;
+  --color-heat-3: #c8f542;
+
+  --font-sans: Archivo, system-ui, -apple-system, sans-serif;
 }
 
 html {
@@ -33,16 +39,61 @@ html {
 }
 
 body {
-  background: var(--color-ink);
+  background: var(--color-screen);
   color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior-y: contain;
 }
 
-/* Toggles are tapped with a thumb, at night, repeatedly. Nothing should
-   select, zoom, or otherwise get in the way. */
+/* Tiles are tapped with a thumb, at night, repeatedly. Nothing should select,
+   zoom, or otherwise get in the way. */
 button {
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
+}
+
+/* The design hides scrollbars; the content still scrolls. */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+@keyframes fp-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.fp-toast {
+  animation: fp-rise 180ms ease-out;
+}
+
+@keyframes fp-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fp-screen {
+  animation: fp-fade 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fp-toast,
+  .fp-screen {
+    animation: none;
+  }
 }
