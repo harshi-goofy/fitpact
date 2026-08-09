@@ -21,15 +21,14 @@ const WEEKLY_SWIM_TARGET = 4;
 const WEEKLY_GYM_TARGET = 5;
 const WEEKLY_DIET_TARGET = 7;
 
-// One reward every 2 kg down. Edit the labels freely and re-run the seed —
-// existing rewards are matched on kgLost, so changing a label keeps whatever
-// has already been claimed.
+// One reward every 2.5 kg down. Edit freely and re-run the seed — rewards are
+// matched on kgLost, so changing a label keeps whatever has already been
+// claimed, and dropping one only deletes it if it was never claimed.
 const REWARDS: { kgLost: number; label: string }[] = [
-  { kgLost: 2, label: "New swimsuit" },
-  { kgLost: 4, label: "Full body massage" },
-  { kgLost: 6, label: "Day trip somewhere new" },
-  { kgLost: 8, label: "New outfit in the new size" },
-  { kgLost: 10, label: "Weekend getaway" },
+  { kgLost: 2.5, label: "New makeup brush set" },
+  { kgLost: 5, label: "Weekend getaway" },
+  { kgLost: 7.5, label: "Bobbi Brown cream" },
+  { kgLost: 10, label: "International trip" },
 ];
 /* ------------------------------------------------------------------ */
 

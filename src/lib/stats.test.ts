@@ -368,12 +368,13 @@ check("a streak survives Dec into Jan", () => {
 
 /* ---- rewards --------------------------------------------------------- */
 
+// Mirrors the real set in prisma/seed.ts — quarter-of-the-way thresholds,
+// including the fractional ones, so the tests exercise what actually ships.
 const REWARD_SEEDS = [
-  { id: "r2", kgLost: 2, label: "New swimsuit", claimedAt: null },
-  { id: "r4", kgLost: 4, label: "Full body massage", claimedAt: null },
-  { id: "r6", kgLost: 6, label: "Day trip somewhere new", claimedAt: null },
-  { id: "r8", kgLost: 8, label: "New outfit in the new size", claimedAt: null },
-  { id: "r10", kgLost: 10, label: "Weekend getaway", claimedAt: null },
+  { id: "r25", kgLost: 2.5, label: "New makeup brush set", claimedAt: null },
+  { id: "r5", kgLost: 5, label: "Weekend getaway", claimedAt: null },
+  { id: "r75", kgLost: 7.5, label: "Bobbi Brown cream", claimedAt: null },
+  { id: "r10", kgLost: 10, label: "International trip", claimedAt: null },
 ];
 
 /** A weight plan with `lostKg` forced, so reward tests don't depend on dates. */
@@ -385,20 +386,28 @@ function planAt(lostKg: number) {
 check("no rewards earned at the starting weight", () => {
   const r = buildRewards(REWARD_SEEDS, planAt(0));
   eq(r.earnedCount, 0);
-  eq(r.next?.label, "New swimsuit");
-  eq(r.toNextKg, 2);
+  eq(r.next?.label, "New makeup brush set");
+  eq(r.toNextKg, 2.5);
 });
 
 check("rewards unlock as the kilos come off", () => {
-  eq(buildRewards(REWARD_SEEDS, planAt(2)).earnedCount, 1);
-  eq(buildRewards(REWARD_SEEDS, planAt(5)).earnedCount, 2, "5 kg clears 2 and 4, not 6.");
-  eq(buildRewards(REWARD_SEEDS, planAt(10)).earnedCount, 5);
+  eq(buildRewards(REWARD_SEEDS, planAt(2.5)).earnedCount, 1);
+  eq(buildRewards(REWARD_SEEDS, planAt(6)).earnedCount, 2, "6 kg clears 2.5 and 5, not 7.5.");
+  eq(buildRewards(REWARD_SEEDS, planAt(10)).earnedCount, 4);
 });
 
 check("the next reward is the first one not yet earned", () => {
   const r = buildRewards(REWARD_SEEDS, planAt(5));
-  eq(r.next?.kgLost, 6);
-  eq(r.toNextKg, 1, "1 kg from 5 to 6.");
+  eq(r.next?.kgLost, 7.5);
+  eq(r.toNextKg, 2.5, "2.5 kg from 5 to 7.5.");
+});
+
+check("fractional thresholds survive the arithmetic", () => {
+  // 2.5 and 7.5 are real thresholds, so half-kilos must not drift.
+  const r = buildRewards(REWARD_SEEDS, planAt(7.5));
+  eq(r.earnedCount, 3, "7.5 exactly clears the 7.5 kg mark.");
+  eq(r.next?.kgLost, 10);
+  eq(r.toNextKg, 2.5, "no floating-point dust.");
 });
 
 check("once everything is unlocked there is no next", () => {
@@ -408,28 +417,30 @@ check("once everything is unlocked there is no next", () => {
 });
 
 check("a hair under the threshold still counts — scales aren't that precise", () => {
-  eq(buildRewards(REWARD_SEEDS, planAt(1.96)).earnedCount, 1, "1.96 kg clears the 2 kg mark.");
-  eq(buildRewards(REWARD_SEEDS, planAt(1.9)).earnedCount, 0, "1.9 kg does not.");
+  eq(buildRewards(REWARD_SEEDS, planAt(2.46)).earnedCount, 1, "2.46 kg clears the 2.5 kg mark.");
+  eq(buildRewards(REWARD_SEEDS, planAt(2.4)).earnedCount, 0, "2.4 kg does not.");
 });
 
 check("dots sit proportionally along the whole journey", () => {
   const r = buildRewards(REWARD_SEEDS, planAt(0));
-  // 88 -> 78 is a 10 kg span, so 2 kg is a fifth of the way along.
-  eq(r.rewards[0].pos, 0.2);
-  eq(r.rewards[2].pos, 0.6);
-  eq(r.rewards[4].pos, 1);
+  // 88 -> 78 is a 10 kg span, so the four rewards quarter it evenly.
+  eq(r.rewards[0].pos, 0.25);
+  eq(r.rewards[1].pos, 0.5);
+  eq(r.rewards[2].pos, 0.75);
+  eq(r.rewards[3].pos, 1);
 });
 
 check("each reward knows the weight it is waiting at", () => {
   const r = buildRewards(REWARD_SEEDS, planAt(0));
-  eq(r.rewards[0].atKg, 86, "2 kg down from 88.");
-  eq(r.rewards[4].atKg, 78, "the last one is the goal itself.");
+  eq(r.rewards[0].atKg, 85.5, "2.5 kg down from 88.");
+  eq(r.rewards[2].atKg, 80.5);
+  eq(r.rewards[3].atKg, 78, "the last one is the goal itself.");
 });
 
 check("claimed is stored, earned is derived — they are not the same thing", () => {
   const seeds = [
-    { id: "r2", kgLost: 2, label: "New swimsuit", claimedAt: new Date("2026-08-01") },
-    { id: "r4", kgLost: 4, label: "Full body massage", claimedAt: null },
+    { id: "r25", kgLost: 2.5, label: "New makeup brush set", claimedAt: new Date("2026-08-01") },
+    { id: "r5", kgLost: 5, label: "Weekend getaway", claimedAt: null },
   ];
   const r = buildRewards(seeds, planAt(5));
   eq(r.earnedCount, 2, "both earned.");
@@ -439,11 +450,11 @@ check("claimed is stored, earned is derived — they are not the same thing", ()
 });
 
 check("rewards come back in order however they were stored", () => {
-  const shuffled = [REWARD_SEEDS[3], REWARD_SEEDS[0], REWARD_SEEDS[4], REWARD_SEEDS[1]];
+  const shuffled = [REWARD_SEEDS[3], REWARD_SEEDS[0], REWARD_SEEDS[2], REWARD_SEEDS[1]];
   const r = buildRewards(shuffled, planAt(0));
   eq(
     r.rewards.map((x) => x.kgLost),
-    [2, 4, 8, 10],
+    [2.5, 5, 7.5, 10],
   );
 });
 
