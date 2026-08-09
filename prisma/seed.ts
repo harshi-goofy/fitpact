@@ -20,6 +20,17 @@ const GOAL_DATE = "2027-01-01";
 const WEEKLY_SWIM_TARGET = 4;
 const WEEKLY_GYM_TARGET = 5;
 const WEEKLY_DIET_TARGET = 7;
+
+// One reward every 2 kg down. Edit the labels freely and re-run the seed —
+// existing rewards are matched on kgLost, so changing a label keeps whatever
+// has already been claimed.
+const REWARDS: { kgLost: number; label: string }[] = [
+  { kgLost: 2, label: "New swimsuit" },
+  { kgLost: 4, label: "Full body massage" },
+  { kgLost: 6, label: "Day trip somewhere new" },
+  { kgLost: 8, label: "New outfit in the new size" },
+  { kgLost: 10, label: "Weekend getaway" },
+];
 /* ------------------------------------------------------------------ */
 
 function todayInTz(tz: string): Date {
@@ -82,6 +93,19 @@ async function main() {
     },
   });
 
+  // Upsert on kgLost so re-seeding never wipes a claim.
+  for (const r of REWARDS) {
+    await prisma.reward.upsert({
+      where: { kgLost: r.kgLost },
+      update: { label: r.label },
+      create: { kgLost: r.kgLost, label: r.label },
+    });
+  }
+  // Drop any reward no longer in the list above, but never a claimed one.
+  await prisma.reward.deleteMany({
+    where: { kgLost: { notIn: REWARDS.map((r) => r.kgLost) }, claimedAt: null },
+  });
+
   const days = Math.round((goal.getTime() - settings.startDate.getTime()) / 86_400_000);
   const perWeek = days > 0 ? ((START_WEIGHT_KG - GOAL_WEIGHT_KG) / days) * 7 : 0;
 
@@ -91,6 +115,7 @@ async function main() {
   console.log("  targets :", `swim ${WEEKLY_SWIM_TARGET} · gym ${WEEKLY_GYM_TARGET} · diet ${WEEKLY_DIET_TARGET} per week`);
   console.log("  weight  :", `${START_WEIGHT_KG}kg -> ${GOAL_WEIGHT_KG}kg by ${GOAL_DATE}`);
   console.log("  pace    :", `${perWeek.toFixed(2)} kg/week over ${days} days`);
+  console.log("  rewards :", REWARDS.map((r) => `${r.kgLost}kg ${r.label}`).join(" · "));
 }
 
 main()

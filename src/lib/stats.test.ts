@@ -10,6 +10,7 @@ import {
   buildCheatPlan,
   buildConfirmRows,
   buildMonthTargets,
+  buildRewards,
   buildWeightPlan,
   bestStreak,
   currentStreak,
@@ -363,6 +364,94 @@ check("a streak survives Dec into Jan", () => {
     "2027-01-01": "sgd",
   });
   eq(currentStreak(e, "2027-01-01").count, 3);
+});
+
+/* ---- rewards --------------------------------------------------------- */
+
+const REWARD_SEEDS = [
+  { id: "r2", kgLost: 2, label: "New swimsuit", claimedAt: null },
+  { id: "r4", kgLost: 4, label: "Full body massage", claimedAt: null },
+  { id: "r6", kgLost: 6, label: "Day trip somewhere new", claimedAt: null },
+  { id: "r8", kgLost: 8, label: "New outfit in the new size", claimedAt: null },
+  { id: "r10", kgLost: 10, label: "Weekend getaway", claimedAt: null },
+];
+
+/** A weight plan with `lostKg` forced, so reward tests don't depend on dates. */
+function planAt(lostKg: number) {
+  const w = buildWeightPlan(map({}), "2026-08-08", SETTINGS);
+  return { ...w, lostKg, pct: lostKg / (w.startKg - w.goalKg) };
+}
+
+check("no rewards earned at the starting weight", () => {
+  const r = buildRewards(REWARD_SEEDS, planAt(0));
+  eq(r.earnedCount, 0);
+  eq(r.next?.label, "New swimsuit");
+  eq(r.toNextKg, 2);
+});
+
+check("rewards unlock as the kilos come off", () => {
+  eq(buildRewards(REWARD_SEEDS, planAt(2)).earnedCount, 1);
+  eq(buildRewards(REWARD_SEEDS, planAt(5)).earnedCount, 2, "5 kg clears 2 and 4, not 6.");
+  eq(buildRewards(REWARD_SEEDS, planAt(10)).earnedCount, 5);
+});
+
+check("the next reward is the first one not yet earned", () => {
+  const r = buildRewards(REWARD_SEEDS, planAt(5));
+  eq(r.next?.kgLost, 6);
+  eq(r.toNextKg, 1, "1 kg from 5 to 6.");
+});
+
+check("once everything is unlocked there is no next", () => {
+  const r = buildRewards(REWARD_SEEDS, planAt(10));
+  eq(r.next, null);
+  eq(r.toNextKg, 0);
+});
+
+check("a hair under the threshold still counts — scales aren't that precise", () => {
+  eq(buildRewards(REWARD_SEEDS, planAt(1.96)).earnedCount, 1, "1.96 kg clears the 2 kg mark.");
+  eq(buildRewards(REWARD_SEEDS, planAt(1.9)).earnedCount, 0, "1.9 kg does not.");
+});
+
+check("dots sit proportionally along the whole journey", () => {
+  const r = buildRewards(REWARD_SEEDS, planAt(0));
+  // 88 -> 78 is a 10 kg span, so 2 kg is a fifth of the way along.
+  eq(r.rewards[0].pos, 0.2);
+  eq(r.rewards[2].pos, 0.6);
+  eq(r.rewards[4].pos, 1);
+});
+
+check("each reward knows the weight it is waiting at", () => {
+  const r = buildRewards(REWARD_SEEDS, planAt(0));
+  eq(r.rewards[0].atKg, 86, "2 kg down from 88.");
+  eq(r.rewards[4].atKg, 78, "the last one is the goal itself.");
+});
+
+check("claimed is stored, earned is derived — they are not the same thing", () => {
+  const seeds = [
+    { id: "r2", kgLost: 2, label: "New swimsuit", claimedAt: new Date("2026-08-01") },
+    { id: "r4", kgLost: 4, label: "Full body massage", claimedAt: null },
+  ];
+  const r = buildRewards(seeds, planAt(5));
+  eq(r.earnedCount, 2, "both earned.");
+  eq(r.rewards[0].claimed, true);
+  eq(r.rewards[1].claimed, false);
+  eq(r.unclaimed, 1, "earned but not collected.");
+});
+
+check("rewards come back in order however they were stored", () => {
+  const shuffled = [REWARD_SEEDS[3], REWARD_SEEDS[0], REWARD_SEEDS[4], REWARD_SEEDS[1]];
+  const r = buildRewards(shuffled, planAt(0));
+  eq(
+    r.rewards.map((x) => x.kgLost),
+    [2, 4, 8, 10],
+  );
+});
+
+check("no rewards configured is not a crash", () => {
+  const r = buildRewards([], planAt(3));
+  eq(r.rewards.length, 0);
+  eq(r.next, null);
+  eq(r.earnedCount, 0);
 });
 
 /* ---- partner confirmation ------------------------------------------- */

@@ -2,7 +2,17 @@
 
 import { formatDayLabel } from "@/lib/timezone";
 import type { BoardPayload, Entry, HabitKey } from "@/lib/types";
-import { Bar, Card, Eyebrow, HABIT, HABIT_ORDER, LetterBadge, SectionHeading, StatBlock } from "./ui";
+import {
+  Bar,
+  Card,
+  Eyebrow,
+  HABIT,
+  HABIT_ORDER,
+  LetterBadge,
+  RewardTrack,
+  SectionHeading,
+  StatBlock,
+} from "./ui";
 
 function greeting(name: string, hour: number) {
   const part = hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening";
@@ -15,15 +25,19 @@ export default function TodayScreen({
   onToggle,
   busy,
   canLog = true,
+  onClaimReward,
+  claimBusy,
 }: {
   board: BoardPayload;
   entry: Entry;
   onToggle: (habit: HabitKey) => void;
   busy: HabitKey | null;
   canLog?: boolean;
+  onClaimReward?: (id: string, claimed: boolean) => void;
+  claimBusy?: string | null;
 }) {
   const { stats, tracker, today } = board;
-  const { streak, weight, cheat } = stats;
+  const { streak, weight, cheat, rewards } = stats;
 
   // Only used to pick the word "Morning" — the date itself always comes from
   // the server in APP_TIMEZONE, never from the browser.
@@ -327,6 +341,104 @@ export default function TodayScreen({
           </div>
         </details>
       </Card>
+
+      {/* Rewards */}
+      {rewards.rewards.length > 0 ? (
+        <Card className="mt-3 p-5">
+          <div className="flex items-start justify-between">
+            <div>
+              <Eyebrow>Rewards</Eyebrow>
+              <div className="mt-1.5 text-[15px] font-bold text-text">
+                {rewards.next
+                  ? `${rewards.toNextKg.toFixed(1)} kg to ${rewards.next.label}`
+                  : "Every reward unlocked 🎉"}
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-[22px] font-extrabold leading-none tracking-[-1px] text-lime">
+                {rewards.earnedCount}
+                <span className="text-[14px] font-bold text-muted">
+                  /{rewards.rewards.length}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <RewardTrack
+            pct={weight.pct}
+            rewards={rewards.rewards}
+            nextId={rewards.next?.id}
+          />
+
+          <div className="flex justify-between text-[11.5px] font-semibold text-faint">
+            <span>{weight.startKg.toFixed(0)} kg</span>
+            <span>{weight.goalKg.toFixed(0)} kg</span>
+          </div>
+
+          {rewards.unclaimed > 0 ? (
+            <p
+              className="mt-3 rounded-xl border px-3 py-2 text-[12.5px] font-bold"
+              style={{ borderColor: "rgba(200,245,66,.3)", color: "var(--color-lime)" }}
+            >
+              {rewards.unclaimed} unlocked and not claimed yet — go collect.
+            </p>
+          ) : null}
+
+          <details className="mt-4 border-t border-line pt-3.5">
+            <summary className="cursor-pointer list-none text-[12px] font-bold uppercase tracking-[1.2px] text-muted">
+              All rewards ▾
+            </summary>
+            <ul className="mt-3.5 flex flex-col gap-2.5">
+              {rewards.rewards.map((r) => {
+                const isBusy = claimBusy === r.id;
+                return (
+                  <li key={r.id} className="flex items-center gap-3">
+                    <LetterBadge
+                      letter={r.earned ? "✓" : String(r.kgLost)}
+                      color={HABIT.gym.hex}
+                      tint={HABIT.gym.tint}
+                      filled={r.earned}
+                      size={32}
+                    />
+                    <div className="min-w-0 flex-1" style={{ opacity: r.earned ? 1 : 0.5 }}>
+                      <div
+                        className="text-[13.5px] font-bold text-text"
+                        style={{
+                          textDecoration: r.claimed ? "line-through" : undefined,
+                          opacity: r.claimed ? 0.6 : 1,
+                        }}
+                      >
+                        {r.label}
+                      </div>
+                      <div className="text-[11.5px] font-semibold text-faint">
+                        {r.kgLost} kg down · at {r.atKg.toFixed(1)} kg
+                      </div>
+                    </div>
+                    {r.earned && onClaimReward ? (
+                      <button
+                        onClick={() => onClaimReward(r.id, !r.claimed)}
+                        disabled={isBusy}
+                        className="shrink-0 rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold transition-opacity disabled:opacity-40"
+                        style={
+                          r.claimed
+                            ? { background: "transparent", color: "var(--color-muted)" }
+                            : { background: "var(--color-lime)", color: "var(--color-on-lime)" }
+                        }
+                      >
+                        {isBusy ? "…" : r.claimed ? "Claimed" : "Claim"}
+                      </button>
+                    ) : (
+                      <span className="shrink-0 text-[11.5px] font-semibold text-faint">
+                        Locked
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </details>
+        </Card>
+      ) : null}
 
       {/* Cheat meal */}
       <Card className="mt-3 p-5">

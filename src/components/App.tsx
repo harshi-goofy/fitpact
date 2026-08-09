@@ -71,6 +71,7 @@ export default function App({ initial }: { initial: BoardPayload }) {
   const [tab, setTab] = useState<Tab>("today");
   const [busy, setBusy] = useState<HabitKey | null>(null);
   const [confirmBusy, setConfirmBusy] = useState<string | null>(null);
+  const [claimBusy, setClaimBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; bad?: boolean } | null>(null);
 
   const entry = board.entries[board.today] ?? EMPTY_ENTRY(board.today);
@@ -174,6 +175,30 @@ export default function App({ initial }: { initial: BoardPayload }) {
     [confirmBusy],
   );
 
+  const claimReward = useCallback(
+    async (id: string, claimed: boolean) => {
+      setClaimBusy(id);
+      try {
+        const res = await fetch(`/api/rewards/${id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ claimed }),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j.error ?? "Could not update");
+        }
+        setBoard(await res.json());
+        if (claimed) setToast({ text: "Reward claimed 🎉" });
+      } catch (err) {
+        setToast({ text: err instanceof Error ? err.message : "Could not update", bad: true });
+      } finally {
+        setClaimBusy(null);
+      }
+    },
+    [],
+  );
+
   const signOut = useCallback(async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     setBoard((b) => ({ ...b, me: null }));
@@ -218,6 +243,8 @@ export default function App({ initial }: { initial: BoardPayload }) {
           onToggle={toggle}
           busy={busy}
           canLog={isTracker}
+          onClaimReward={claimReward}
+          claimBusy={claimBusy}
         />
       ) : tab === "calendar" ? (
         <CalendarScreen board={board} onRefresh={refresh} canLog={isTracker} />

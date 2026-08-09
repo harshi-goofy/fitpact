@@ -78,6 +78,63 @@ export function Bar({ pct, color, height = 6 }: { pct: number; color: string; he
   );
 }
 
+/**
+ * The reward track: one bar, one dot per reward.
+ *
+ * The dots sit *on* the bar rather than under it, so the fill sweeping past a
+ * dot is the moment of unlocking — the bar and the milestones are one object,
+ * not a chart with a legend. Earned dots go solid lime; the one you're working
+ * toward gets a ring so your eye lands on it first.
+ */
+export function RewardTrack({
+  pct,
+  rewards,
+  nextId,
+}: {
+  pct: number;
+  rewards: { id: string; pos: number; earned: boolean; claimed: boolean }[];
+  nextId?: string | null;
+}) {
+  const w = Math.min(Math.max(pct, 0), 1) * 100;
+  return (
+    <div className="relative py-2.5">
+      <div className="h-2 overflow-hidden rounded-full bg-line">
+        <div
+          className="h-full rounded-full transition-[width] duration-700 ease-out"
+          style={{ width: `${w}%`, background: "var(--color-lime)" }}
+        />
+      </div>
+
+      {rewards.map((r) => {
+        const isNext = r.id === nextId;
+        const size = r.earned ? 16 : isNext ? 15 : 11;
+        return (
+          <div
+            key={r.id}
+            className="absolute top-1/2 transition-all duration-500"
+            style={{
+              left: `${r.pos * 100}%`,
+              width: size,
+              height: size,
+              marginLeft: -size / 2,
+              marginTop: -size / 2,
+              borderRadius: 999,
+              background: r.earned ? "var(--color-lime)" : "var(--color-screen)",
+              border: r.earned
+                ? "2px solid var(--color-screen)"
+                : isNext
+                  ? "2px solid var(--color-lime)"
+                  : "2px solid var(--color-line-hover)",
+              boxShadow: isNext && !r.earned ? "0 0 0 4px rgba(200,245,66,.15)" : undefined,
+            }}
+            aria-hidden
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 /** The rounded-square letter badge used for habits and achievements. */
 export function LetterBadge({
   letter,

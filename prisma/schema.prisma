@@ -116,3 +116,21 @@ model Milestone {
 
   @@unique([kind])
 }
+
+/**
+ * A reward waiting at a weight milestone.
+ *
+ * Whether one is *earned* is derived from the weight log, never stored —
+ * same discipline as streaks and cheat days. What is stored is claimedAt,
+ * because "we actually went and did this" is a fact about the world that no
+ * amount of arithmetic can work out.
+ */
+model Reward {
+  id        String    @id @default(cuid())
+  /** kg lost from the starting weight that unlocks this. 2, 4, 6 … */
+  kgLost    Float     @unique
+  label     String
+  claimedAt DateTime?
+
+  @@index([kgLost])
+}

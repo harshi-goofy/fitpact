@@ -92,6 +92,30 @@ export type WeightPlan = {
   weeklyLogs: WeightWeek[];
 };
 
+export type Reward = {
+  id: string;
+  /** kg down from the start weight that unlocks this. */
+  kgLost: number;
+  label: string;
+  /** The weight you have to hit — startKg minus kgLost. */
+  atKg: number;
+  earned: boolean;
+  claimed: boolean;
+  /** Where the dot sits on the bar, 0–1 across the whole journey. */
+  pos: number;
+};
+
+export type RewardPlan = {
+  rewards: Reward[];
+  earnedCount: number;
+  /** The next one still to unlock, or null once they're all earned. */
+  next: Reward | null;
+  /** kg still to lose before `next` unlocks. */
+  toNextKg: number;
+  /** Earned but not yet actually claimed — worth nagging about. */
+  unclaimed: number;
+};
+
 export type CheatPlan = {
   /** Both cheat Sundays in the current month. */
   slots: { date: DateKey; label: string; state: string; past: boolean }[];
@@ -117,6 +141,7 @@ export type BoardStats = {
   daysLeftInMonth: number;
   monthLabel: string;
   weight: WeightPlan;
+  rewards: RewardPlan;
   cheat: CheatPlan;
   isRestToday: boolean;
   totals: { swim: number; gym: number; diet: number; sessions: number };

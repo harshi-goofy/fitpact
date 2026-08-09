@@ -44,7 +44,7 @@ export async function loadBoard(days = 180): Promise<BoardPayload> {
   // resolves, and so lifetime totals and best-ever are honest.
   const windowStart = addDays(today, -(days + 800));
 
-  const [rows, commentRows] = await Promise.all([
+  const [rows, commentRows, rewardRows] = await Promise.all([
     prisma.dayEntry.findMany({
       where: { userId: tracker.id, date: { gte: keyToDate(windowStart) } },
       select: {
@@ -66,6 +66,7 @@ export async function loadBoard(days = 180): Promise<BoardPayload> {
       orderBy: { createdAt: "asc" },
       take: 300,
     }),
+    prisma.reward.findMany({ orderBy: { kgLost: "asc" } }),
   ]);
 
   const entries: Record<DateKey, Entry> = {};
@@ -113,7 +114,7 @@ export async function loadBoard(days = 180): Promise<BoardPayload> {
     today,
     days: lastNDays(days, today),
     entries,
-    stats: computeStats(entries as EntryMap, today, settings),
+    stats: computeStats(entries as EntryMap, today, settings, rewardRows),
     settings: {
       timezone: tz,
       monthlySwimTarget: settings.monthlySwimTarget,

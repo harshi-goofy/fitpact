@@ -44,6 +44,8 @@ import type {
   Entry,
   HabitKey,
   MonthTarget,
+  Reward,
+  RewardPlan,
   Streak,
   WeightPlan,
   WeightWeek,
@@ -368,6 +370,52 @@ export function buildWeightPlan(
 }
 
 /* ------------------------------------------------------------------ *
+ * Rewards
+ * ------------------------------------------------------------------ */
+
+/** What the seed knows about a reward, before any progress is applied. */
+export type RewardSeed = { id: string; kgLost: number; label: string; claimedAt: Date | null };
+
+/**
+ * Place the rewards along the journey and work out which are unlocked.
+ *
+ * `pos` is the fraction of the *whole* journey a reward sits at, so the dots
+ * line up with the same progress bar the weight card already uses — a reward
+ * at 2 kg on a 10 kg plan sits at 0.2, wherever the current weight happens to
+ * be. Earned is derived from kg lost and nothing else; claimed is stored,
+ * because only a human knows whether you actually took the weekend away.
+ */
+export function buildRewards(
+  seeds: RewardSeed[],
+  weight: WeightPlan,
+): RewardPlan {
+  const span = weight.startKg - weight.goalKg;
+  const sorted = [...seeds].sort((a, b) => a.kgLost - b.kgLost);
+
+  const rewards: Reward[] = sorted.map((r) => ({
+    id: r.id,
+    kgLost: r.kgLost,
+    label: r.label,
+    atKg: Math.round((weight.startKg - r.kgLost) * 10) / 10,
+    // A small tolerance: 85.99 kg logged against an 86.0 target is a hit, not
+    // a near miss. Scales are not that precise and neither is this promise.
+    earned: weight.lostKg >= r.kgLost - 0.05,
+    claimed: r.claimedAt !== null,
+    pos: span <= 0 ? 1 : Math.min(Math.max(r.kgLost / span, 0), 1),
+  }));
+
+  const next = rewards.find((r) => !r.earned) ?? null;
+
+  return {
+    rewards,
+    earnedCount: rewards.filter((r) => r.earned).length,
+    next,
+    toNextKg: next ? Math.round((next.kgLost - weight.lostKg) * 10) / 10 : 0,
+    unclaimed: rewards.filter((r) => r.earned && !r.claimed).length,
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * Cheat meals
  * ------------------------------------------------------------------ */
 
@@ -531,7 +579,12 @@ export function buildConfirmRows(entries: EntryMap, today: DateKey): ConfirmRow[
  * Everything at once
  * ------------------------------------------------------------------ */
 
-export function computeStats(entries: EntryMap, today: DateKey, s: StatsSettings): BoardStats {
+export function computeStats(
+  entries: EntryMap,
+  today: DateKey,
+  s: StatsSettings,
+  rewardSeeds: RewardSeed[] = [],
+): BoardStats {
   const all = Object.keys(entries).filter((k) => k <= today);
   // Lifetime totals count confirmed sessions only, for the same reason the
   // streak does: an unconfirmed claim isn't a record of anything.
@@ -569,6 +622,7 @@ export function computeStats(entries: EntryMap, today: DateKey, s: StatsSettings
       new Date(`${today}T00:00:00.000Z`),
     ),
     weight,
+    rewards: buildRewards(rewardSeeds, weight),
     cheat: buildCheatPlan(today),
     isRestToday: isSunday(today),
     totals,
