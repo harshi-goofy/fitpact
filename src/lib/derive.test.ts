@@ -13,9 +13,11 @@ import {
   cheatUsage,
   claimDeadline,
   formatCountdown,
+  nextRewardLine,
   nextStep,
+  weightDelta,
 } from "./derive";
-import type { Entry } from "./types";
+import type { Entry, Reward, RewardPlan, WeightPlan } from "./types";
 
 let passed = 0;
 const failures: string[] = [];
@@ -223,6 +225,129 @@ check("progress never exceeds the target", () => {
 check("badges that aren't a countable run get no progress label", () => {
   eq(badgeProgress("weight_half", badgeStats), null);
   eq(badgeProgress("perfect_7", badgeStats), null);
+});
+
+/* ---- weightDelta ----------------------------------------------------- */
+
+/** A map of date → weight, with everything else defaulted. */
+function weighIns(map: Record<string, number | null>): Record<string, Entry> {
+  const out: Record<string, Entry> = {};
+  for (const [date, kg] of Object.entries(map)) {
+    out[date] = entry({ date: date as Entry["date"], weightKg: kg });
+  }
+  return out;
+}
+
+check("a single weigh-in has no direction to report", () => {
+  eq(weightDelta(weighIns({ "2026-08-10": 86 }), "2026-08-10"), null);
+});
+
+check("days with no weight logged are not weigh-ins", () => {
+  // Two entries, but only one carries a reading — still nothing to compare.
+  eq(weightDelta(weighIns({ "2026-08-09": null, "2026-08-10": 86 }), "2026-08-10"), null);
+});
+
+check("losing weight reads as down", () => {
+  const d = weightDelta(weighIns({ "2026-08-09": 86.4, "2026-08-10": 86 }), "2026-08-10");
+  eq(d?.direction, "down");
+  eq(d?.kg, -0.4);
+  eq(d?.label, "0.4 kg since 9 Aug");
+});
+
+check("gaining weight reads as up", () => {
+  const d = weightDelta(weighIns({ "2026-08-09": 85.5, "2026-08-10": 86.2 }), "2026-08-10");
+  eq(d?.direction, "up");
+  eq(d?.kg, 0.7);
+});
+
+check("the same reading twice is flat, not a tiny loss", () => {
+  const d = weightDelta(weighIns({ "2026-08-09": 86, "2026-08-10": 86 }), "2026-08-10");
+  eq(d?.direction, "flat");
+  eq(d?.label, "No change since 9 Aug");
+});
+
+check("it compares the last two weigh-ins, however far apart they sit", () => {
+  // A three-week gap must not read as "no change" — it is still the last move.
+  const d = weightDelta(weighIns({ "2026-07-20": 88, "2026-08-10": 86.5 }), "2026-08-10");
+  eq(d?.kg, -1.5);
+  eq(d?.label, "1.5 kg since 20 Jul");
+});
+
+check("future weigh-ins are ignored", () => {
+  const d = weightDelta(
+    weighIns({ "2026-08-08": 87, "2026-08-09": 86.5, "2026-08-20": 80 }),
+    "2026-08-09",
+  );
+  eq(d?.kg, -0.5);
+});
+
+/* ---- nextRewardLine -------------------------------------------------- */
+
+function reward(kgLost: number, earned: boolean): Reward {
+  return {
+    id: `r${kgLost}`,
+    kgLost,
+    label: `${kgLost} kg reward`,
+    atKg: 88 - kgLost,
+    earned,
+    claimed: false,
+    pos: kgLost / 10,
+  };
+}
+
+function plan(currentKg: number, earnedUpTo: number) {
+  const rewards = [2.5, 5, 7.5, 10].map((kg) => reward(kg, kg <= earnedUpTo));
+  const next = rewards.find((r) => !r.earned) ?? null;
+  const weight = { startKg: 88, goalKg: 78, currentKg } as WeightPlan;
+  const rewardPlan = {
+    rewards,
+    earnedCount: rewards.filter((r) => r.earned).length,
+    next,
+    toNextKg: 0,
+    unclaimed: 0,
+  } as RewardPlan;
+  return { weight, rewardPlan };
+}
+
+check("the gap is measured from the latest weigh-in to the reward's weight", () => {
+  const { weight, rewardPlan } = plan(86.1, 0);
+  const line = nextRewardLine(weight, rewardPlan);
+  eq(line?.atKg, 85.5);
+  eq(line?.toGoKg, 0.6);
+  eq(line?.headline, "0.6 kg to go — hit 85.5 kg");
+});
+
+check("progress is across the current leg, not the whole journey", () => {
+  // Second reward: leg runs 85.5 → 83, and 84.25 is halfway along it.
+  const { weight, rewardPlan } = plan(84.25, 2.5);
+  const line = nextRewardLine(weight, rewardPlan);
+  eq(line?.atKg, 83);
+  eq(line?.pct, 0.5);
+});
+
+check("the first leg measures from the start weight", () => {
+  const { weight, rewardPlan } = plan(86.75, 0);
+  eq(nextRewardLine(weight, rewardPlan)?.pct, 0.5);
+});
+
+check("gaining weight back clamps progress at zero rather than going negative", () => {
+  const { weight, rewardPlan } = plan(89, 0);
+  const line = nextRewardLine(weight, rewardPlan);
+  eq(line?.pct, 0);
+  eq(line?.toGoKg, 3.5);
+});
+
+check("a reward already reached says so instead of showing a negative gap", () => {
+  const { weight, rewardPlan } = plan(85.4, 0);
+  const line = nextRewardLine(weight, rewardPlan);
+  eq(line?.toGoKg, 0);
+  eq(line?.pct, 1);
+  eq(line?.headline, "Reached — 2.5 kg reward is yours");
+});
+
+check("nothing to chase once every reward is unlocked", () => {
+  const { weight, rewardPlan } = plan(78, 10);
+  eq(nextRewardLine(weight, rewardPlan), null);
 });
 
 /* ---- report ---------------------------------------------------------- */

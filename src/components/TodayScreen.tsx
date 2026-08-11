@@ -7,7 +7,9 @@ import {
   cheatUsage,
   claimDeadline,
   formatCountdown,
+  nextRewardLine,
   nextStep,
+  weightDelta,
 } from "@/lib/derive";
 import { formatDayLabel } from "@/lib/timezone";
 import type { BoardPayload, Entry, HabitKey } from "@/lib/types";
@@ -98,6 +100,11 @@ export default function TodayScreen({
     .map((k) => board.entries[k].weightKg as number)
     .slice(-8);
   const seriesDelta = series.length >= 2 ? series[series.length - 1] - series[0] : null;
+
+  /* Movement since the previous weigh-in, and the next reward restated
+     against the latest one — both recompute the moment a weight is logged. */
+  const delta = weightDelta(board.entries, today);
+  const nextReward = nextRewardLine(weight, rewards);
 
   const confirmedCount = HABIT_ORDER.filter((k) => stateFor(entry, k) === "confirmed").length;
   const pillText =
@@ -290,6 +297,28 @@ export default function TodayScreen({
                 kg
               </div>
             </div>
+            {/* Movement since the last weigh-in. Down is lime, up is the alert
+                colour — the arrow and the colour say the same thing twice, on
+                purpose, so it reads at a glance and still works colour-blind. */}
+            {delta ? (
+              <div
+                className="mt-1.5 flex items-center gap-1 text-[12px] font-bold"
+                style={{
+                  color:
+                    delta.direction === "up"
+                      ? ALERT
+                      : delta.direction === "down"
+                        ? "var(--color-lime)"
+                        : "#6b7462",
+                }}
+              >
+                <span aria-hidden className="text-[10px] leading-none">
+                  {delta.direction === "up" ? "▲" : delta.direction === "down" ? "▼" : "—"}
+                </span>
+                <span className="fp-nums">{delta.label}</span>
+              </div>
+            ) : null}
+
             <div
               className="mt-2 text-[12px] font-bold"
               style={{ color: weight.currentKg <= weight.monthlyTargetKg ? "var(--color-lime)" : ALERT }}
@@ -339,6 +368,28 @@ export default function TodayScreen({
           <span>{weight.startKg.toFixed(0)} kg</span>
           <span>{weight.goalKg.toFixed(0)} kg</span>
         </div>
+
+        {/* Next reward, in the terms the scale speaks: the reading to hit and
+            how far that is from the latest weigh-in. Surfaced here rather than
+            left inside the collapsed list, because it is the number the user
+            opens the app to check. */}
+        {nextReward ? (
+          <div className="mt-[18px] rounded-2xl border border-line p-3.5">
+            <div className="flex items-baseline justify-between gap-3">
+              <Eyebrow>Next reward</Eyebrow>
+              <div className="fp-nums text-[11px] font-bold text-muted">
+                {rewards.earnedCount} of {rewards.rewards.length}
+              </div>
+            </div>
+            <div className="fp-nums mt-2 text-[17px] font-extrabold tracking-[-.4px] text-text">
+              {nextReward.headline}
+            </div>
+            <div className="mt-1 text-[12px] font-semibold text-text-2">{nextReward.label}</div>
+            <div className="mt-2.5">
+              <Bar pct={nextReward.pct} color="var(--color-lime)" />
+            </div>
+          </div>
+        ) : null}
 
         <Disclosure
           className="mt-5 border-t border-line pt-[18px]"

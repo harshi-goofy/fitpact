@@ -133,6 +133,111 @@ export function formatCountdown(ms: number): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * Weigh-in movement
+ * ------------------------------------------------------------------ */
+
+export type WeightDelta = {
+  /** Signed change in kg from the previous weigh-in. Negative is progress. */
+  kg: number;
+  /** "down" is good and reads lime; "up" reads as the alert colour. */
+  direction: "up" | "down" | "flat";
+  /** "▼ 0.4 kg since 9 Aug" — ready to render. */
+  label: string;
+};
+
+/**
+ * Compare the two most recent weigh-ins.
+ *
+ * Deliberately the *previous entry*, not the previous day: weigh-ins are
+ * sporadic, and "no change" would be the honest-but-useless answer on every
+ * day the scale wasn't stepped on. Returns null until there are two readings
+ * to compare, because a single point has no direction.
+ */
+export function weightDelta(
+  entries: Record<DateKey, Entry>,
+  today: DateKey,
+): WeightDelta | null {
+  const keys = Object.keys(entries)
+    .filter((k) => k <= today && entries[k]?.weightKg != null)
+    .sort();
+  if (keys.length < 2) return null;
+
+  const latest = entries[keys[keys.length - 1]].weightKg as number;
+  const prevKey = keys[keys.length - 2];
+  const prev = entries[prevKey].weightKg as number;
+
+  // One decimal place, because that is all a bathroom scale honestly knows.
+  const kg = Math.round((latest - prev) * 10) / 10;
+  const direction = kg > 0 ? "up" : kg < 0 ? "down" : "flat";
+  const since = formatShortDate(prevKey);
+  const label =
+    direction === "flat"
+      ? `No change since ${since}`
+      : `${Math.abs(kg).toFixed(1)} kg since ${since}`;
+
+  return { kg, direction, label };
+}
+
+/** "9 Aug" — the short form used in the weigh-in delta line. */
+function formatShortDate(date: DateKey): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+  }).format(new Date(`${date}T00:00:00.000Z`));
+}
+
+/* ------------------------------------------------------------------ *
+ * Next reward
+ * ------------------------------------------------------------------ */
+
+export type NextRewardLine = {
+  /** The scale reading that unlocks it. */
+  atKg: number;
+  /** How much further to go from the latest weigh-in. */
+  toGoKg: number;
+  label: string;
+  /** "0.6 kg to go — hit 85.5 kg" */
+  headline: string;
+  /** How far along this leg of the journey the latest weigh-in sits, 0–1. */
+  pct: number;
+};
+
+/**
+ * The next unearned reward, restated against the *latest* weigh-in.
+ *
+ * `buildRewards` already derives which rewards are earned, but it phrases the
+ * gap in kg-lost-since-start. This turns it into the number the user actually
+ * checks against: the reading they need to see on the scale next time, and how
+ * far that is from where they stand now. Returns null when everything is
+ * unlocked — there is no next thing to chase.
+ */
+export function nextRewardLine(
+  weight: BoardStats["weight"],
+  rewards: BoardStats["rewards"],
+): NextRewardLine | null {
+  const next = rewards.next;
+  if (!next) return null;
+
+  const toGoKg = Math.max(Math.round((weight.currentKg - next.atKg) * 10) / 10, 0);
+
+  // Progress across this leg only: from the previous reward's threshold (or
+  // the start weight) to this one, so the bar fills per-reward rather than
+  // creeping across the whole 88 → 78 journey.
+  const earned = rewards.rewards.filter((r) => r.earned);
+  const legStartKg = earned.length > 0 ? earned[earned.length - 1].atKg : weight.startKg;
+  const leg = legStartKg - next.atKg;
+  const pct = leg <= 0 ? 1 : Math.min(Math.max((legStartKg - weight.currentKg) / leg, 0), 1);
+
+  const headline =
+    toGoKg <= 0
+      ? `Reached — ${next.label} is yours`
+      : `${toGoKg.toFixed(1)} kg to go — hit ${next.atKg.toFixed(1)} kg`;
+
+  return { atKg: next.atKg, toGoKg, label: next.label, headline, pct };
+}
+
+/* ------------------------------------------------------------------ *
  * Cheat meals
  * ------------------------------------------------------------------ */
 
