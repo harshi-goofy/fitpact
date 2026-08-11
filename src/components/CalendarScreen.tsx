@@ -1,18 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { activeDaysInMonth, calendarStats } from "@/lib/derive";
 import { heatLevel } from "@/lib/stats";
 import {
   addDays,
   dayOfWeek,
   daysInMonth,
-  formatDayLabel,
   isCheatSunday,
-  isSunday,
   monthRange,
 } from "@/lib/timezone";
 import type { BoardPayload, HabitKey } from "@/lib/types";
-import { Card, Eyebrow, HABIT, HABIT_ORDER, HEAT, LetterBadge } from "./ui";
+import { Card, Eyebrow, HABIT, HABIT_ORDER, HEAT, ScreenTitle, StatTile } from "./ui";
+
+const DOW = ["S", "M", "T", "W", "T", "F", "S"];
 
 export default function CalendarScreen({
   board,
@@ -23,14 +24,14 @@ export default function CalendarScreen({
   onRefresh?: () => void;
   canLog?: boolean;
 }) {
-  const { today, entries, stats } = board;
+  const { today, entries } = board;
   const [selected, setSelected] = useState(today);
   const [weightInput, setWeightInput] = useState("");
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   const { start } = monthRange(today);
   const total = daysInMonth(today);
+  // The grid runs Sunday-first, but dayOfWeek() is Monday-indexed.
   const lead = (dayOfWeek(start) + 1) % 7;
 
   const days = useMemo(
@@ -38,20 +39,16 @@ export default function CalendarScreen({
     [start, total],
   );
 
-  const activeCount = days.filter((d) => d <= today && heatLevel(entries, d) > 0).length;
-
   const sel = entries[selected];
   const selLogged: HabitKey[] = HABIT_ORDER.filter((h) => sel?.[`${h}Done`]);
-  const isFuture = selected > today;
-
-  const pctOf = (n: number, d: number) => (d === 0 ? 0 : Math.round((n / d) * 100));
-  const elapsed = Math.max(days.filter((d) => d <= today).length, 1);
+  const monthName = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", month: "long" }).format(
+    new Date(`${today}T00:00:00.000Z`),
+  );
 
   // Sync the weight input whenever the selected day or entries change.
   useEffect(() => {
     const w = entries[selected]?.weightKg;
     setWeightInput(w != null ? w.toFixed(1) : "");
-    setSaved(false);
   }, [selected, entries]);
 
   async function saveWeight() {
@@ -64,198 +61,198 @@ export default function CalendarScreen({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ weightKg: kg }),
       });
-      if (res.ok) {
-        setSaved(true);
-        onRefresh?.();
-      }
+      if (res.ok) onRefresh?.();
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <div className="fp-screen">
-      <header className="pt-3.5 pb-5">
-        <Eyebrow>This month</Eyebrow>
-        <h1 className="mt-1 text-[28px] font-bold tracking-[-.5px] text-text">
-          {stats.monthLabel}
-        </h1>
-      </header>
+    <div className="fp-screen flex flex-col gap-3">
+      <ScreenTitle
+        eyebrow={`${activeDaysInMonth(entries, today)} of ${total} days active`}
+        title={monthName}
+        aside={
+          <div className="flex items-center gap-[5px]">
+            <span className="text-[9.5px] font-bold tracking-[.4px]" style={{ color: "#535c4c" }}>
+              LESS
+            </span>
+            {HEAT.map((c) => (
+              <div key={c} className="h-2.5 w-2.5 rounded-[3px]" style={{ background: c }} />
+            ))}
+            <span className="text-[9.5px] font-bold tracking-[.4px]" style={{ color: "#535c4c" }}>
+              MORE
+            </span>
+          </div>
+        }
+      />
 
-      <Card className="p-4">
-        <div className="mb-2 grid grid-cols-7 gap-1.5">
-          {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-            <div key={i} className="text-center text-[11px] font-bold text-faint">
+      {/* Month grid */}
+      <Card className="rounded-3xl px-4 py-[18px]">
+        <div className="grid grid-cols-7 gap-1.5">
+          {DOW.map((d, i) => (
+            <div
+              key={`${d}${i}`}
+              className="pb-1 text-center text-[9.5px] font-bold tracking-[.6px]"
+              style={{ color: "#535c4c" }}
+            >
               {d}
             </div>
           ))}
-        </div>
 
-        <div className="grid grid-cols-7 gap-1.5">
           {Array.from({ length: lead }, (_, i) => (
-            <div key={`pad-${i}`} aria-hidden />
+            <div key={`lead-${i}`} aria-hidden />
           ))}
+
           {days.map((d) => {
-            const level = heatLevel(entries, d);
+            const isToday = d === today;
             const isSel = d === selected;
             const future = d > today;
-            const restOnly = isSunday(d) && level === 0 && !future;
+            const heat = heatLevel(entries, d);
+            const cheat = isCheatSunday(d);
             const hasWeight = entries[d]?.weightKg != null;
+
+            let bg = "var(--color-well)";
+            let fg = "var(--color-faint)";
+            if (heat > 0) {
+              bg = HEAT[heat];
+              fg = "#131709";
+            }
+            if (future) {
+              bg = "#131610";
+              fg = "#3a4234";
+            }
+            if (isSel) {
+              bg = "#f4f6f1";
+              fg = "#131709";
+            }
+
             return (
               <button
                 key={d}
                 onClick={() => setSelected(d)}
-                aria-label={`${formatDayLabel(d)}, ${level} of 3 logged`}
-                aria-pressed={isSel}
-                className="relative flex aspect-square flex-col items-center justify-center rounded-[9px] text-[11px] font-bold transition-transform active:scale-95"
+                aria-current={isToday ? "date" : undefined}
+                aria-label={d}
+                className="fp-tap box-border flex aspect-square flex-col items-center justify-center gap-px rounded-[11px]"
                 style={{
-                  background: isSel ? "#f2f4ef" : future ? "transparent" : HEAT[level],
-                  border: future
-                    ? "1px solid #1e221b"
-                    : restOnly
-                      ? "1px dashed rgba(200,245,66,.4)"
-                      : "1px solid transparent",
-                  color: isSel || level >= 2 ? "#12150f" : future ? "#3a4034" : "#7c8474",
-                  opacity: future ? 0.6 : 1,
+                  background: bg,
+                  border: `1.5px ${cheat && !isSel ? "dashed" : "solid"} ${
+                    cheat && !isSel ? "#7f9a2c" : isToday && !isSel ? "var(--color-lime)" : "transparent"
+                  }`,
                 }}
               >
-                <span>{Number(d.slice(8))}</span>
-                {hasWeight ? (
-                  <span
-                    className="absolute bottom-[3px] left-1/2 h-[4px] w-[4px] -translate-x-1/2 rounded-full"
-                    style={{
-                      background: isSel ? HABIT.diet.hex : level >= 2 ? "#12150f" : HABIT.diet.hex,
-                    }}
-                  />
-                ) : null}
+                <span className="fp-nums text-[12px] font-bold leading-none" style={{ color: fg }}>
+                  {Number(d.slice(8))}
+                </span>
+                <span
+                  className="h-[3px] w-[3px] rounded-full"
+                  style={{ background: hasWeight ? HABIT.diet.hex : "transparent" }}
+                />
               </button>
             );
           })}
         </div>
 
-        <div className="mt-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-[12px] font-semibold text-muted">
-              {activeCount} of {total} days active
-            </span>
-            <div className="flex items-center gap-1">
-              <span
-                className="h-[5px] w-[5px] rounded-full"
-                style={{ background: HABIT.diet.hex }}
-              />
-              <span className="text-[11px] font-semibold text-faint">weight logged</span>
-            </div>
+        <div className="mt-4 flex items-center gap-3.5 border-t border-line pt-3.5">
+          <div className="flex items-center gap-1.5">
+            <div className="h-[5px] w-[5px] rounded-full" style={{ background: HABIT.diet.hex }} />
+            <span className="text-[10.5px] font-semibold text-muted">weight logged</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-semibold text-faint">less</span>
-            {HEAT.map((c) => (
-              <span key={c} className="h-2.5 w-2.5 rounded-[3px]" style={{ background: c }} />
-            ))}
-            <span className="text-[10px] font-semibold text-faint">more</span>
+            <div
+              className="box-border h-2.5 w-2.5 rounded-[3px]"
+              style={{ border: "1.5px dashed var(--color-lime)" }}
+            />
+            <span className="text-[10.5px] font-semibold text-muted">cheat day</span>
           </div>
         </div>
       </Card>
 
-      {/* Selected day detail */}
-      <Card className="mt-3 p-5">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-[15px] font-bold text-text">
-            {selLogged.length > 0 ? "Logged" : isSunday(selected) ? "Rest day" : "Nothing logged"}{" "}
-            · {formatDayLabel(selected)}
-          </h2>
-          {isCheatSunday(selected) ? (
-            <span
-              className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[1px]"
-              style={{ background: HABIT.diet.tint, color: HABIT.diet.hex }}
-            >
-              Cheat
-            </span>
-          ) : null}
-        </div>
+      {/* Selected day */}
+      <Card className="rounded-3xl p-5">
+        <Eyebrow>
+          {selLogged.length ? "Logged · " : ""}
+          {new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", day: "numeric", month: "short" }).format(
+            new Date(`${selected}T00:00:00.000Z`),
+          )}
+        </Eyebrow>
 
-        {selLogged.length > 0 ? (
-          <ul className="mt-3.5 flex flex-col gap-3">
-            {selLogged.map((h) => (
-              <li key={h} className="flex items-center gap-3">
-                <LetterBadge
-                  letter={HABIT[h].letter}
-                  color={HABIT[h].hex}
-                  tint={HABIT[h].tint}
-                  size={34}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="text-[14px] font-bold text-text">{HABIT[h].label}</div>
-                  <div className="text-[12px] font-semibold text-faint">Completed</div>
+        <div className="mt-3 flex flex-col gap-0.5">
+          {selLogged.length ? (
+            selLogged.map((h) => {
+              const confirmed =
+                h === "diet" ? sel?.dietConfirmedAt != null : sel?.moveConfirmedAt != null;
+              return (
+                <div key={h} className="flex items-center gap-3 py-[7px]">
+                  <div
+                    className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-xl text-[12.5px] font-extrabold"
+                    style={{ background: HABIT[h].tint, color: HABIT[h].hex }}
+                  >
+                    {HABIT[h].letter}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13.5px] font-bold" style={{ color: "#eef0e9" }}>
+                      {HABIT[h].label}
+                    </div>
+                    <div className="mt-0.5 text-[11.5px] font-semibold text-muted">
+                      {confirmed
+                        ? `Confirmed by ${board.partner?.name ?? "partner"}`
+                        : "Awaiting confirmation"}
+                    </div>
+                  </div>
                 </div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-2.5 text-[13px] font-semibold text-faint">
-            {isFuture
-              ? "Still to come."
-              : isSunday(selected)
-                ? "Sundays are rest days — the streak holds."
-                : "No swim, gym or diet recorded."}
-          </p>
-        )}
-
-        {/* Weight logging */}
-        <div className="mt-4 border-t border-line pt-4">
-          <Eyebrow className="mb-2.5">Weight</Eyebrow>
-          {!canLog ? (
-            <p className="text-[13px] font-semibold text-faint">
-              Only {board.tracker.name} can log weight.
-            </p>
-          ) : !isFuture ? (
-            <div className="flex items-center gap-2.5">
-              <input
-                type="number"
-                step="0.1"
-                min="30"
-                max="300"
-                placeholder="e.g. 87.5"
-                value={weightInput}
-                onChange={(e) => {
-                  setWeightInput(e.target.value);
-                  setSaved(false);
-                }}
-                onKeyDown={(e) => e.key === "Enter" && saveWeight()}
-                className="w-[90px] rounded-xl border border-line bg-screen px-3 py-2 text-[15px] font-bold text-text placeholder:text-faint focus:outline-none focus:border-[var(--color-lime)]"
-              />
-              <span className="text-[14px] font-semibold text-muted">kg</span>
-              <button
-                onClick={saveWeight}
-                disabled={saving || !weightInput}
-                className="rounded-xl px-4 py-2 text-[13px] font-bold transition-opacity disabled:opacity-40"
-                style={{ background: "var(--color-lime)", color: "var(--color-on-lime)" }}
-              >
-                {saving ? "Saving…" : saved ? "Saved ✓" : "Save"}
-              </button>
-            </div>
+              );
+            })
           ) : (
-            <p className="text-[13px] font-semibold text-faint">Future date — nothing to log.</p>
+            <div className="flex items-center gap-3 py-[7px]">
+              <div
+                className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-xl text-[12.5px] font-extrabold"
+                style={{ background: "var(--color-well)", color: "var(--color-muted)" }}
+              >
+                —
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[13.5px] font-bold" style={{ color: "#eef0e9" }}>
+                  Nothing logged
+                </div>
+                <div className="mt-0.5 text-[11.5px] font-semibold text-muted">
+                  {selected > today ? "Not yet" : "Rest day"}
+                </div>
+              </div>
+            </div>
           )}
         </div>
 
-        {sel?.note ? (
-          <p className="mt-3 text-[13px] font-medium italic text-text-2">"{sel.note}"</p>
+        {/* Weight is logged here rather than on Today because it is a fact about
+            a date, not a claim about effort — it needs no confirmation. */}
+        {canLog ? (
+          <div className="mt-4 flex items-center gap-2.5 border-t border-line pt-4">
+            <Eyebrow className="shrink-0">Weight</Eyebrow>
+            <input
+              value={weightInput}
+              onChange={(e) => setWeightInput(e.target.value)}
+              inputMode="decimal"
+              placeholder="e.g. 87.4"
+              aria-label="Weight in kilograms"
+              className="fp-nums min-w-0 flex-1 rounded-[13px] px-3.5 py-[11px] text-[13.5px] font-bold text-text outline-none"
+              style={{ background: "var(--color-input)", border: "1px solid #2b3025" }}
+            />
+            <button
+              onClick={saveWeight}
+              disabled={saving || !weightInput}
+              className="fp-tap shrink-0 rounded-[13px] px-[18px] py-[11px] text-[13px] font-bold disabled:opacity-40"
+              style={{ background: "var(--color-lime)", color: "var(--color-on-lime)" }}
+            >
+              {saving ? "…" : "Save"}
+            </button>
+          </div>
         ) : null}
       </Card>
 
-      {/* Month stats */}
-      <div className="mt-3 flex gap-2.5">
-        {[
-          { v: `${pctOf(stats.monthTargets[0].done, elapsed)}%`, l: "Swim days", c: HABIT.swim.hex },
-          { v: String(stats.monthTargets[1].done), l: "Gym sessions", c: HABIT.gym.hex },
-          { v: `${pctOf(stats.monthTargets[2].done, elapsed)}%`, l: "Diet on target", c: HABIT.diet.hex },
-        ].map((s) => (
-          <Card key={s.l} className="flex-1 p-3.5">
-            <div className="text-[22px] font-extrabold tracking-[-1px]" style={{ color: s.c }}>
-              {s.v}
-            </div>
-            <div className="mt-0.5 text-[12px] font-semibold leading-tight text-muted">{s.l}</div>
-          </Card>
+      {/* Month summary */}
+      <div className="flex gap-2.5">
+        {calendarStats(entries, today).map((s) => (
+          <StatTile key={s.label} value={s.value} label={s.label} color={s.color} />
         ))}
       </div>
     </div>

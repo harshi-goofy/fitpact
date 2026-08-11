@@ -1,22 +1,62 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import {
+  awaitingLabel,
+  awaitingToday,
+  cheatUsage,
+  claimDeadline,
+  formatCountdown,
+  nextStep,
+} from "@/lib/derive";
 import { formatDayLabel } from "@/lib/timezone";
 import type { BoardPayload, Entry, HabitKey } from "@/lib/types";
+import InsightsCard from "./InsightsCard";
 import {
+  ALERT,
   Bar,
   Card,
+  Disclosure,
   Eyebrow,
   HABIT,
   HABIT_ORDER,
   LetterBadge,
   RewardTrack,
-  SectionHeading,
-  StatBlock,
+  Sparkline,
 } from "./ui";
 
-function greeting(name: string, hour: number) {
-  const part = hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening";
-  return `${part}, ${name}`;
+/**
+ * A claim state, as the design names them.
+ *   none      — nothing logged
+ *   awaiting  — claimed, the partner hasn't ticked it
+ *   confirmed — ticked, and therefore counting
+ */
+type LogState = "none" | "awaiting" | "confirmed";
+
+function stateFor(entry: Entry, key: HabitKey): LogState {
+  const done = entry[`${key}Done`];
+  if (!done) return "none";
+  // Swim and gym share one move confirmation; diet carries its own.
+  const confirmed = key === "diet" ? entry.dietConfirmedAt !== null : entry.moveConfirmedAt !== null;
+  return confirmed ? "confirmed" : "awaiting";
+}
+
+/**
+ * The live countdown to the moment today's claims expire.
+ *
+ * Ticks once a second, and only while something is actually pending — an
+ * interval running behind a card nobody is looking at is a battery cost for
+ * nothing. The deadline itself comes from the server's date, so a phone with
+ * the wrong clock shows the wrong remaining time but never the wrong deadline.
+ */
+function useCountdown(deadline: Date, active: boolean): string {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [active]);
+  return formatCountdown(deadline.getTime() - now);
 }
 
 export default function TodayScreen({
@@ -27,6 +67,8 @@ export default function TodayScreen({
   canLog = true,
   onClaimReward,
   claimBusy,
+  onGoTogether,
+  onFlash,
 }: {
   board: BoardPayload;
   entry: Entry;
@@ -35,67 +77,128 @@ export default function TodayScreen({
   canLog?: boolean;
   onClaimReward?: (id: string, claimed: boolean) => void;
   claimBusy?: string | null;
+  onGoTogether?: () => void;
+  onFlash?: (msg: string) => void;
 }) {
   const { stats, tracker, today } = board;
   const { streak, weight, cheat, rewards } = stats;
 
-  // Only used to pick the word "Morning" — the date itself always comes from
-  // the server in APP_TIMEZONE, never from the browser.
-  const hour = new Date().getHours();
+  const [showRewards, setShowRewards] = useState(false);
+  const [showCheat, setShowCheat] = useState(false);
+
+  const awaiting = awaitingToday(entry);
+  const next = nextStep(entry, streak.count, stats.isRestToday);
+  const countdown = useCountdown(claimDeadline(today), awaiting > 0);
+  const cheatUsed = cheatUsage(cheat);
+
+  /* The last eight weigh-ins, oldest first — the sparkline's whole input. */
+  const series = Object.keys(board.entries)
+    .filter((k) => k <= today && board.entries[k]?.weightKg != null)
+    .sort()
+    .map((k) => board.entries[k].weightKg as number)
+    .slice(-8);
+  const seriesDelta = series.length >= 2 ? series[series.length - 1] - series[0] : null;
+
+  const confirmedCount = HABIT_ORDER.filter((k) => stateFor(entry, k) === "confirmed").length;
+  const pillText =
+    awaiting > 0
+      ? `${awaiting} WAITING →`
+      : confirmedCount < 3
+        ? `${3 - confirmedCount} TO LOG`
+        : "ALL CONFIRMED";
+
+  /**
+   * Tapping a tile claims it. Tapping one that is already claimed says so
+   * rather than un-claiming it: a claim is a statement to another person, and
+   * quietly retracting it behind their back is the one thing this app exists
+   * to prevent.
+   */
+  const handleTile = (key: HabitKey) => {
+    const state = stateFor(entry, key);
+    if (!canLog) {
+      onFlash?.("Only Harshi can log — you confirm on Together.");
+      return;
+    }
+    if (state === "confirmed") {
+      onFlash?.(`${HABIT[key].label} already confirmed`);
+      return;
+    }
+    if (state === "awaiting") {
+      onFlash?.(`${HABIT[key].label} is waiting on ${board.partner?.name ?? "your partner"}`);
+      return;
+    }
+    onToggle(key);
+  };
 
   return (
-    <div className="fp-screen">
+    <div className="fp-screen flex flex-col gap-3">
       {/* Header */}
-      <header className="flex items-start justify-between pt-3.5 pb-5">
+      <header className="flex items-center justify-between px-0.5 pt-4 pb-0.5">
         <div>
-          <Eyebrow className="tracking-[1.4px]">{formatDayLabel(today)}</Eyebrow>
-          <h1 className="mt-1 text-[28px] font-bold tracking-[-.5px] text-text">
-            {greeting(tracker.name, hour)}
-          </h1>
+          <Eyebrow className="tracking-[1.6px]">{formatDayLabel(today)}</Eyebrow>
+          <h1 className="mt-[3px] text-[25px] font-bold tracking-[-.6px] text-text">FitPact</h1>
         </div>
-        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[#333830] bg-[#22261f] text-sm font-bold text-lime">
+        <div
+          className="flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-lime"
+          style={{ background: "#171b14", border: "1px solid #2b3025" }}
+        >
           {tracker.name.charAt(0).toUpperCase()}
         </div>
       </header>
 
       {/* Streak hero */}
       <section
-        className="relative overflow-hidden rounded-[28px] bg-lime p-6 text-on-lime"
+        className="relative overflow-hidden rounded-[26px] bg-lime p-[22px] text-on-lime"
         aria-label="Current streak"
       >
-        <div className="absolute -right-10 -top-10 h-45 w-45 rounded-full bg-white/25" aria-hidden />
+        <div
+          className="absolute rounded-full bg-white/[.22]"
+          style={{ right: -52, top: -64, width: 180, height: 180 }}
+          aria-hidden
+        />
         <div className="relative">
-          <div className="text-[12px] font-bold uppercase tracking-[1.6px] opacity-65">
-            Current streak
+          <div className="flex items-start justify-between">
+            <div className="text-[10.5px] font-bold uppercase tracking-[1.8px] opacity-55">
+              Current streak
+            </div>
+            <button
+              onClick={onGoTogether}
+              className="fp-tap rounded-full px-3 py-1.5 text-[10.5px] font-bold tracking-[.5px] text-on-lime"
+              style={{ background: awaiting > 0 ? "rgba(19,23,9,.12)" : "rgba(19,23,9,.08)" }}
+            >
+              {pillText}
+            </button>
           </div>
-          <div className="mt-1.5 flex items-end gap-2.5">
-            <div className="text-[78px] font-extrabold leading-[.85] tracking-[-4px]">
+
+          <div className="mt-2 flex items-end gap-[9px]">
+            <div className="fp-nums text-[68px] font-extrabold leading-[.82] tracking-[-4px]">
               {streak.count}
             </div>
-            <div className="pb-2 text-lg font-bold">{streak.count === 1 ? "day" : "days"}</div>
+            <div className="pb-2 text-[17px] font-bold opacity-65">days</div>
           </div>
-          <p className="mt-3 text-sm font-medium opacity-75">
+
+          <div className="mt-2.5 text-[13px] font-semibold opacity-60">
             {streak.count === 0 && streak.pending
-              ? "Log diet plus a swim or gym to start"
+              ? "Log a move and diet to start"
               : streak.count >= streak.best
                 ? `Your best run yet${streak.pending ? " · today still open" : ""}`
                 : `${streak.best - streak.count} ${streak.best - streak.count === 1 ? "day" : "days"} from your record of ${streak.best}`}
-          </p>
+          </div>
 
-          <div className="mt-4.5 flex gap-1.5">
-            {streak.week.map((d, i) => (
-              <div key={d.date} className="flex flex-1 flex-col items-center gap-[7px]">
+          <div className="mt-5 flex gap-1.5">
+            {streak.week.map((d) => (
+              <div key={d.date} className="flex flex-1 flex-col items-center gap-2">
                 <div
-                  className="h-1.5 self-stretch rounded-full"
+                  className="h-[5px] self-stretch rounded-full"
                   style={{
                     background: d.done
-                      ? "rgba(18,21,15,.75)"
+                      ? "rgba(19,23,9,.55)"
                       : d.future
-                        ? "rgba(18,21,15,.15)"
-                        : "rgba(18,21,15,.28)",
+                        ? "rgba(19,23,9,.1)"
+                        : "rgba(19,23,9,.16)",
                   }}
                 />
-                <div className="text-[12px] font-bold opacity-60">{d.label}</div>
+                <div className="text-[10.5px] font-bold opacity-50">{d.label}</div>
               </div>
             ))}
           </div>
@@ -103,29 +206,23 @@ export default function TodayScreen({
       </section>
 
       {/* Quick log */}
-      <div className="mt-3 flex gap-2.5">
+      <div className="flex gap-[9px]">
         {HABIT_ORDER.map((key) => {
           const h = HABIT[key];
-          const done = entry[`${key}Done`];
+          const state = stateFor(entry, key);
           const isBusy = busy === key;
-          // Swim and gym share one "move" confirmation; diet has its own.
-          const confirmed =
-            key === "diet" ? entry.dietConfirmedAt !== null : entry.moveConfirmedAt !== null;
-          const state = !done
-            ? "none"
-            : confirmed
-              ? "confirmed"
-              : "pending";
           return (
             <button
               key={key}
-              onClick={() => onToggle(key)}
-              disabled={isBusy || !canLog}
-              aria-pressed={done}
-              className="flex flex-1 flex-col items-center gap-2.5 rounded-[20px] border bg-card px-3 py-4 transition-colors disabled:opacity-60"
+              onClick={() => handleTile(key)}
+              disabled={isBusy}
+              aria-pressed={state !== "none"}
+              className={`fp-card fp-tap flex flex-1 flex-col items-center gap-2.5 rounded-[20px] border px-2 pb-3.5 pt-4 disabled:opacity-60 ${
+                state === "awaiting" ? "fp-pending" : ""
+              }`}
               style={{
-                borderColor: done ? h.hex : "var(--color-line)",
-                borderStyle: state === "pending" ? "dashed" : "solid",
+                borderColor:
+                  state === "confirmed" ? h.hex : state === "awaiting" ? `${h.hex}66` : "var(--color-line)",
               }}
             >
               <LetterBadge
@@ -134,339 +231,266 @@ export default function TodayScreen({
                 tint={h.tint}
                 filled={state === "confirmed"}
               />
-              <span className="text-[14px] font-bold text-text">{h.label}</span>
+              <span className="text-[13px] font-bold text-text">{h.label}</span>
               <span
-                className="text-[12px] font-semibold"
-                style={{ color: done ? h.hex : "var(--color-muted)" }}
+                className="text-[10px] font-bold uppercase tracking-[.5px]"
+                style={{
+                  color:
+                    state === "confirmed"
+                      ? h.hex
+                      : state === "awaiting"
+                        ? "var(--color-text-2)"
+                        : "var(--color-muted)",
+                }}
               >
-                {isBusy
-                  ? "Saving…"
-                  : state === "confirmed"
-                    ? "Confirmed"
-                    : state === "pending"
-                      ? "Awaiting ✓"
-                      : "Not logged"}
+                {isBusy ? "Saving…" : state === "confirmed" ? "Confirmed" : state === "awaiting" ? "Awaiting" : "Not logged"}
               </span>
             </button>
           );
         })}
       </div>
 
-      {!canLog ? (
-        <p className="mt-3 rounded-2xl border border-line bg-card px-4 py-3 text-[13px] font-semibold text-text-2">
-          You're signed in as the partner — tap <span className="text-lime">Together</span> to
-          confirm {tracker.name}'s days.
-        </p>
-      ) : stats.awaitingConfirm > 0 ? (
-        <p className="mt-3 rounded-2xl border px-4 py-3 text-[13px] font-semibold text-text-2"
-          style={{ borderColor: "rgba(200,245,66,.3)", background: "rgba(200,245,66,.05)" }}
-        >
-          <span className="text-lime">{stats.awaitingConfirm} waiting.</span> Nothing counts until{" "}
-          {board.partner?.name ?? "your partner"} confirms — the window closes at the end of
-          tomorrow.
-        </p>
-      ) : null}
+      {/* Do this next */}
+      <Card
+        className="rounded-[22px] p-[18px]"
+        style={{ borderColor: next.urgent ? "#2e3524" : "var(--color-line)" }}
+      >
+        <Eyebrow>Do this next</Eyebrow>
+        <div className="mt-[7px] text-[16px] font-bold tracking-[-.3px] text-text">
+          {next.action}
+        </div>
+        <p className="mt-[5px] text-[12.5px] font-medium leading-[1.5] text-text-2">{next.note}</p>
 
-      {stats.isRestToday ? (
-        <p className="mt-3 rounded-2xl border border-line bg-card px-4 py-3 text-[13.5px] font-semibold text-text-2">
-          <span className="text-lime">Rest day.</span> Sundays keep the streak whatever you do.
-        </p>
-      ) : null}
+        {awaiting > 0 ? (
+          <div className="mt-3.5 flex items-center gap-[9px] border-t border-line pt-3.5">
+            <div className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: HABIT.diet.hex }} />
+            <div className="flex-1 text-[12px] font-semibold text-text-2">{awaitingLabel(entry)}</div>
+            <div
+              className="fp-nums text-[13px] font-extrabold tracking-[-.2px]"
+              style={{ color: HABIT.diet.hex }}
+            >
+              {countdown}
+            </div>
+          </div>
+        ) : null}
+      </Card>
+
+      {/* Weight and rewards — deliberately one card. The reward ladder is the
+          same 88 → 78 journey as the weight bar, so splitting them would draw
+          the same line twice and imply two separate goals. */}
+      <Card className="rounded-3xl p-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <Eyebrow>Current</Eyebrow>
+            <div className="mt-2 flex items-end gap-1.5">
+              <div className="fp-nums text-[38px] font-extrabold leading-[.9] tracking-[-1.8px] text-text">
+                {weight.currentKg.toFixed(1)}
+              </div>
+              <div className="pb-[3px] text-[13px] font-bold" style={{ color: "#6b7462" }}>
+                kg
+              </div>
+            </div>
+            <div
+              className="mt-2 text-[12px] font-bold"
+              style={{ color: weight.currentKg <= weight.monthlyTargetKg ? "var(--color-lime)" : ALERT }}
+            >
+              {weight.currentKg <= weight.monthlyTargetKg
+                ? "On track for this month"
+                : `${(weight.currentKg - weight.monthlyTargetKg).toFixed(1)} kg above this month's target`}
+            </div>
+          </div>
+
+          <div className="text-right">
+            <Eyebrow>{stats.monthLabel.slice(0, 3)} target</Eyebrow>
+            <div className="fp-nums mt-2 text-[19px] font-bold tracking-[-.4px] text-text-2">
+              {weight.monthlyTargetKg.toFixed(1)} kg
+            </div>
+            <Eyebrow className="mt-3.5">Goal</Eyebrow>
+            <div className="fp-nums mt-1.5 text-[19px] font-bold tracking-[-.4px] text-lime">
+              {weight.goalKg.toFixed(1)} kg
+            </div>
+          </div>
+        </div>
+
+        {/* Trend */}
+        {series.length >= 2 ? (
+          <div className="mt-5 flex items-end gap-3.5 border-t border-line pt-[18px]">
+            <Sparkline values={series} color="var(--color-lime)" />
+            <div className="shrink-0 text-right">
+              <div
+                className="fp-nums text-[13px] font-extrabold tracking-[-.3px]"
+                style={{ color: seriesDelta !== null && seriesDelta > 0 ? ALERT : "var(--color-lime)" }}
+              >
+                {seriesDelta === null
+                  ? "—"
+                  : `${seriesDelta > 0 ? "+" : "−"}${Math.abs(seriesDelta).toFixed(1)} kg`}
+              </div>
+              <div className="mt-[3px] text-[10px] font-semibold text-muted">
+                last {series.length} weigh-ins
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Reward ladder */}
+        <RewardTrack pct={weight.pct} rewards={rewards.rewards} nextId={rewards.next?.id} />
+
+        <div className="mt-0.5 flex justify-between text-[11px] font-bold text-muted">
+          <span>{weight.startKg.toFixed(0)} kg</span>
+          <span>{weight.goalKg.toFixed(0)} kg</span>
+        </div>
+
+        <Disclosure
+          className="mt-5 border-t border-line pt-[18px]"
+          open={showRewards}
+          onToggle={() => setShowRewards((v) => !v)}
+          openLabel="Hide"
+          closedLabel="All rewards"
+          header={
+            <div>
+              <Eyebrow>
+                Next reward · {rewards.earnedCount} of {rewards.rewards.length} unlocked
+              </Eyebrow>
+              <div className="mt-1.5 text-[15.5px] font-bold tracking-[-.2px] text-text">
+                {rewards.next
+                  ? `${rewards.toNextKg.toFixed(1)} kg to ${rewards.next.label}`
+                  : "Every reward unlocked"}
+              </div>
+            </div>
+          }
+        >
+          <ul className="mt-3.5 flex flex-col gap-0.5">
+            {rewards.rewards.map((r) => {
+              const isNext = r.id === rewards.next?.id;
+              const isBusy = claimBusy === r.id;
+              return (
+                <li key={r.id} className="flex items-center gap-3 py-2">
+                  <LetterBadge
+                    letter={r.earned ? "✓" : String(r.kgLost)}
+                    color={isNext || r.earned ? "var(--color-lime)" : "#5a6450"}
+                    tint={isNext || r.earned ? HABIT.gym.tint : "var(--color-well)"}
+                    filled={r.earned}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div
+                      className="text-[13.5px] font-bold"
+                      style={{
+                        color: isNext || r.earned ? "#eef0e9" : "var(--color-text-2)",
+                        textDecoration: r.claimed ? "line-through" : undefined,
+                      }}
+                    >
+                      {r.label}
+                    </div>
+                    <div className="mt-0.5 text-[11px] font-semibold text-muted">
+                      {r.kgLost} kg down · at {r.atKg.toFixed(1)} kg
+                    </div>
+                  </div>
+                  {r.earned && onClaimReward ? (
+                    <button
+                      onClick={() => onClaimReward(r.id, !r.claimed)}
+                      disabled={isBusy}
+                      className="fp-tap shrink-0 rounded-[11px] px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[.5px] disabled:opacity-40"
+                      style={
+                        r.claimed
+                          ? { color: "var(--color-faint)" }
+                          : { background: "var(--color-lime)", color: "var(--color-on-lime)" }
+                      }
+                    >
+                      {isBusy ? "…" : r.claimed ? "Claimed" : "Claim"}
+                    </button>
+                  ) : (
+                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-[.5px] text-faint">
+                      Locked
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </Disclosure>
+      </Card>
 
       {/* Month targets */}
-      <SectionHeading
-        title={`End of ${stats.monthLabel}`}
-        aside={`${stats.daysLeftInMonth} ${stats.daysLeftInMonth === 1 ? "day" : "days"} left`}
-      />
-      <Card className="flex flex-col gap-4 p-[18px]">
+      <div className="mt-2.5 flex items-center justify-between px-1">
+        <div className="text-[11px] font-bold uppercase tracking-[1.5px] text-eyebrow">
+          End of {stats.monthLabel}
+        </div>
+        <div className="text-[11px] font-bold text-muted">
+          {stats.daysLeftInMonth} {stats.daysLeftInMonth === 1 ? "day" : "days"} left
+        </div>
+      </div>
+
+      <Card className="flex gap-3.5 rounded-3xl p-[18px]">
         {stats.monthTargets.map((m) => (
-          <div key={m.key}>
-            <div className="flex items-baseline justify-between">
-              <span className="text-[14.5px] font-semibold text-text">{m.label}</span>
-              <span className="text-[13.5px] font-bold text-text-2">
-                {m.done} / {m.target}
-              </span>
+          <div key={m.key} className="flex-1">
+            <div className="text-[11px] font-bold tracking-[.2px] text-text-2">{m.label}</div>
+            <div className="fp-nums mt-1.5 text-[19px] font-bold tracking-[-.5px] text-text">
+              {m.done} / {m.target}
             </div>
             <div className="mt-2">
               <Bar pct={m.pct} color={HABIT[m.key].hex} />
             </div>
-            <p className="mt-1.5 text-[12.5px] font-semibold text-faint">{m.note}</p>
+            <div className="mt-[7px] text-[10px] font-semibold leading-[1.3] text-muted">
+              {m.note}
+            </div>
           </div>
         ))}
       </Card>
 
-      {/* Weight plan */}
-      <Card className="mt-3 p-5">
-        {/* Always visible: target for this month + current weight */}
-        <div className="flex items-center justify-between">
-          <div>
-            <Eyebrow>Target this month</Eyebrow>
-            <div className="mt-1.5 flex items-end gap-1.5">
-              <span className="text-[38px] font-extrabold leading-none tracking-[-1.5px] text-text">
-                {weight.monthlyTargetKg.toFixed(1)}
-              </span>
-              <span className="pb-1 text-sm font-bold text-muted">kg</span>
-            </div>
-          </div>
-          <div className="text-right">
-            <Eyebrow>Current</Eyebrow>
-            <div className="mt-1.5 text-[22px] font-bold text-text-2">
-              {weight.currentKg.toFixed(1)}{" "}
-              <span className="text-sm font-semibold text-muted">kg</span>
-            </div>
-            <div
-              className="mt-0.5 text-[12px] font-bold"
-              style={{
-                color:
-                  weight.currentKg <= weight.monthlyTargetKg ? "var(--color-lime)" : "#ff8a8a",
-              }}
-            >
-              {weight.currentKg <= weight.monthlyTargetKg ? "On track ✓" : `${(weight.currentKg - weight.monthlyTargetKg).toFixed(1)} kg above target`}
-            </div>
+      {/* Cheat meal */}
+      <Card className="flex items-center gap-3.5 rounded-[22px] px-[18px] py-4">
+        <LetterBadge letter="C" color={HABIT.diet.hex} tint={HABIT.diet.tint} />
+        <div className="min-w-0 flex-1">
+          <Eyebrow>Next cheat meal · {cheatUsed.label}</Eyebrow>
+          <div className="mt-[5px] text-[14.5px] font-bold tracking-[-.2px] text-text">
+            {cheat.nextLabel} · {cheat.whenLabel}
           </div>
         </div>
-
-        {/* Everything else is hidden — expand to see details */}
-        <details className="mt-4 border-t border-line pt-3.5">
-          <summary className="cursor-pointer list-none text-[12px] font-bold uppercase tracking-[1.2px] text-muted">
-            Weight details ▾
-          </summary>
-
-          <div className="mt-4">
-            {/* Overall progress bar */}
-            <Eyebrow className="mb-2">
-              Progress · goal{" "}
-              {weight.goalKg.toFixed(1)} kg by{" "}
-              {new Intl.DateTimeFormat("en-GB", {
-                timeZone: "UTC",
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-              }).format(new Date(`${weight.goalDate}T00:00:00.000Z`))}
-            </Eyebrow>
-            <Bar pct={weight.pct} color={HABIT.diet.hex} height={8} />
-            <div className="mt-2 flex justify-between text-[12px] font-semibold text-faint">
-              <span>
-                {weight.lostKg >= 0
-                  ? `${weight.lostKg.toFixed(1)} kg down`
-                  : `${Math.abs(weight.lostKg).toFixed(1)} kg up`}
-              </span>
-              <span>{weight.toGoKg.toFixed(1)} kg to go</span>
-            </div>
-
-            {/* Stats row */}
-            <div className="mt-4 flex gap-2.5 border-t border-line pt-4">
-              <StatBlock
-                value={`${weight.perWeekNeeded.toFixed(2)} kg`}
-                label="Needed/week"
-                color={weight.perWeekNeeded > 1 ? "#ff8a8a" : "var(--color-text)"}
-              />
-              <StatBlock value={String(weight.daysToGoal)} label="Days to goal" />
-              <StatBlock
-                value={`${weight.startKg.toFixed(1)} kg`}
-                label="Start weight"
-              />
-            </div>
-
-            {/* Weekly check-in */}
-            <div className="mt-4 border-t border-line pt-4">
-              <div className="mb-3 text-[12px] font-bold uppercase tracking-[1.2px] text-muted">
-                This month · week by week
-              </div>
-              <div className="flex flex-col gap-2.5">
-                {weight.weeklyLogs.map((wk) => (
-                  <div
-                    key={wk.weekStart}
-                    className="flex items-center justify-between"
-                    style={{ opacity: wk.past && wk.loggedKg === null ? 0.45 : 1 }}
-                  >
-                    <div>
-                      <div className="text-[13px] font-bold text-text">
-                        Week {wk.weekNum}
-                        {wk.current ? (
-                          <span
-                            className="ml-1.5 text-[10px] font-bold uppercase tracking-wide"
-                            style={{ color: "var(--color-lime)" }}
-                          >
-                            Now
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="text-[11.5px] font-semibold text-faint">
-                        Target {wk.targetKg.toFixed(1)} kg
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      {wk.loggedKg !== null ? (
-                        <>
-                          <div
-                            className="text-[14px] font-bold"
-                            style={{
-                              color: wk.loggedKg <= wk.targetKg ? "var(--color-lime)" : "#ff8a8a",
-                            }}
-                          >
-                            {wk.loggedKg.toFixed(1)} kg
-                          </div>
-                          <div className="text-[11px] font-semibold text-muted">
-                            {wk.loggedKg <= wk.targetKg ? "On track ✓" : `${(wk.loggedKg - wk.targetKg).toFixed(1)} above`}
-                          </div>
-                        </>
-                      ) : (
-                        <div className="text-[13px] font-semibold text-faint">
-                          {wk.past ? "Not logged" : "Not yet"}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Month-by-month plan */}
-            <div className="mt-4 border-t border-line pt-4">
-              <div className="mb-3 text-[12px] font-bold uppercase tracking-[1.2px] text-muted">
-                Monthly plan
-              </div>
-              <ul className="flex flex-col gap-2">
-                {weight.checkpoints.map((c) => (
-                  <li key={c.date} className="flex items-baseline justify-between text-[13px]">
-                    <span className="font-semibold text-text-2">
-                      {c.month} {c.date.slice(8)}
-                    </span>
-                    <span className="font-bold text-text">{c.targetKg.toFixed(1)} kg</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </details>
+        <button
+          onClick={() => setShowCheat((v) => !v)}
+          aria-expanded={showCheat}
+          className="fp-tap shrink-0 whitespace-nowrap text-[11px] font-bold"
+          style={{ color: HABIT.diet.hex }}
+        >
+          {showCheat ? "Hide" : "Rules"}
+        </button>
       </Card>
 
-      {/* Rewards */}
-      {rewards.rewards.length > 0 ? (
-        <Card className="mt-3 p-5">
-          <div className="flex items-start justify-between">
-            <div>
-              <Eyebrow>Rewards</Eyebrow>
-              <div className="mt-1.5 text-[15px] font-bold text-text">
-                {rewards.next
-                  ? `${rewards.toNextKg.toFixed(1)} kg to ${rewards.next.label}`
-                  : "Every reward unlocked 🎉"}
-              </div>
-            </div>
-            <div className="shrink-0 text-right">
-              <div className="text-[22px] font-extrabold leading-none tracking-[-1px] text-lime">
-                {rewards.earnedCount}
-                <span className="text-[14px] font-bold text-muted">
-                  /{rewards.rewards.length}
-                </span>
-              </div>
-            </div>
+      {showCheat ? (
+        <Card className="-mt-1 rounded-[22px] p-[18px]">
+          <p className="text-[12.5px] font-medium leading-[1.55] text-text-2">
+            Afternoon meal only. Every other Sunday — one every two weeks, no exceptions.
+          </p>
+          <div className="mt-3.5 flex gap-2">
+            {cheat.slots.map((s) => {
+              const isNext = s.date === cheat.next;
+              return (
+                <div
+                  key={s.date}
+                  className="flex-1 rounded-[14px] border px-3 py-[11px]"
+                  style={{
+                    borderColor: isNext ? "rgba(255,180,92,.35)" : "var(--color-line)",
+                    background: isNext ? "rgba(255,180,92,.07)" : "transparent",
+                  }}
+                >
+                  <div
+                    className="text-[12px] font-bold"
+                    style={{ color: isNext ? HABIT.diet.hex : s.past ? "var(--color-muted)" : "var(--color-text-2)" }}
+                  >
+                    {s.label}
+                  </div>
+                  <div className="mt-[5px] text-[10px] font-bold uppercase tracking-[.4px] text-muted">
+                    {s.state}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-
-          <RewardTrack
-            pct={weight.pct}
-            rewards={rewards.rewards}
-            nextId={rewards.next?.id}
-          />
-
-          <div className="flex justify-between text-[11.5px] font-semibold text-faint">
-            <span>{weight.startKg.toFixed(0)} kg</span>
-            <span>{weight.goalKg.toFixed(0)} kg</span>
-          </div>
-
-          {rewards.unclaimed > 0 ? (
-            <p
-              className="mt-3 rounded-xl border px-3 py-2 text-[12.5px] font-bold"
-              style={{ borderColor: "rgba(200,245,66,.3)", color: "var(--color-lime)" }}
-            >
-              {rewards.unclaimed} unlocked and not claimed yet — go collect.
-            </p>
-          ) : null}
-
-          <details className="mt-4 border-t border-line pt-3.5">
-            <summary className="cursor-pointer list-none text-[12px] font-bold uppercase tracking-[1.2px] text-muted">
-              All rewards ▾
-            </summary>
-            <ul className="mt-3.5 flex flex-col gap-2.5">
-              {rewards.rewards.map((r) => {
-                const isBusy = claimBusy === r.id;
-                return (
-                  <li key={r.id} className="flex items-center gap-3">
-                    <LetterBadge
-                      letter={r.earned ? "✓" : String(r.kgLost)}
-                      color={HABIT.gym.hex}
-                      tint={HABIT.gym.tint}
-                      filled={r.earned}
-                      size={32}
-                    />
-                    <div className="min-w-0 flex-1" style={{ opacity: r.earned ? 1 : 0.5 }}>
-                      <div
-                        className="text-[13.5px] font-bold text-text"
-                        style={{
-                          textDecoration: r.claimed ? "line-through" : undefined,
-                          opacity: r.claimed ? 0.6 : 1,
-                        }}
-                      >
-                        {r.label}
-                      </div>
-                      <div className="text-[11.5px] font-semibold text-faint">
-                        {r.kgLost} kg down · at {r.atKg.toFixed(1)} kg
-                      </div>
-                    </div>
-                    {r.earned && onClaimReward ? (
-                      <button
-                        onClick={() => onClaimReward(r.id, !r.claimed)}
-                        disabled={isBusy}
-                        className="shrink-0 rounded-lg px-2.5 py-1.5 text-[11.5px] font-bold transition-opacity disabled:opacity-40"
-                        style={
-                          r.claimed
-                            ? { background: "transparent", color: "var(--color-muted)" }
-                            : { background: "var(--color-lime)", color: "var(--color-on-lime)" }
-                        }
-                      >
-                        {isBusy ? "…" : r.claimed ? "Claimed" : "Claim"}
-                      </button>
-                    ) : (
-                      <span className="shrink-0 text-[11.5px] font-semibold text-faint">
-                        Locked
-                      </span>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </details>
         </Card>
       ) : null}
 
-      {/* Cheat meal */}
-      <Card className="mt-3 p-5">
-        <div className="flex items-start gap-3">
-          <LetterBadge letter="C" color={HABIT.diet.hex} tint={HABIT.diet.tint} />
-          <div className="min-w-0">
-            <Eyebrow>Next cheat meal</Eyebrow>
-            <div className="mt-1 text-[15px] font-bold text-text">
-              {cheat.whenLabel} · {cheat.nextLabel}
-            </div>
-          </div>
-        </div>
-        <p className="mt-3 text-[13.5px] font-semibold leading-relaxed text-faint">
-          Afternoon meal only. Every other Sunday — one every two weeks, no exceptions.
-        </p>
-        <div className="mt-3.5 flex gap-2.5">
-          {cheat.slots.map((s) => (
-            <div
-              key={s.date}
-              className="flex-1 rounded-2xl border border-line px-3 py-2.5"
-              style={{ opacity: s.past ? 0.45 : 1 }}
-            >
-              <div className="text-[12.5px] font-bold text-text">{s.label}</div>
-              <div className="mt-0.5 text-[11px] font-semibold text-muted">{s.state}</div>
-            </div>
-          ))}
-        </div>
-      </Card>
+      {/* Insights — derived on the client, no extra database work */}
+      <InsightsCard board={board} />
     </div>
   );
 }

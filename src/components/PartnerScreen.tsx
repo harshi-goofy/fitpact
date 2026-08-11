@@ -2,56 +2,87 @@
 
 import { useState } from "react";
 import type { BoardPayload, ConfirmRow } from "@/lib/types";
-import { Card, Eyebrow, HABIT } from "./ui";
+import { ALERT, Card, Eyebrow, HABIT, ScreenTitle } from "./ui";
 
 /**
  * The pact, rendered.
  *
- * Seven rows, Monday to Sunday, two boxes each. Harshi's logging is a claim;
- * this screen is where it becomes a fact. Only the partner's PIN can tick a
- * box, and only while the day is still inside the 24h window — after that the
- * row reads "expired" and the claim is gone for good.
+ * Seven rows, two boxes each. Harshi's logging is a claim; this screen is where
+ * it becomes a fact. Only the partner's PIN can tick a box, and only while the
+ * day is still inside the 24h window — after that the claim is gone for good.
+ *
+ * The grid is a real CSS grid rather than seven flex rows so the MOVE and DIET
+ * columns stay aligned no matter how long a sub-label runs.
  */
 
-function Box({
+type CellState = "confirmed" | "claimed" | "rest" | "empty" | "expired" | "future";
+
+function cellVisuals(state: CellState): { bg: string; border: string; fg: string; sub: string } {
+  switch (state) {
+    case "confirmed":
+      return {
+        bg: "var(--color-lime)",
+        border: "var(--color-lime)",
+        fg: "var(--color-on-lime)",
+        sub: "rgba(19,23,9,.6)",
+      };
+    case "claimed":
+      return {
+        bg: "rgba(203,240,63,.07)",
+        border: "var(--color-lime)",
+        fg: "var(--color-lime)",
+        sub: "var(--color-text-2)",
+      };
+    case "rest":
+      return { bg: "rgba(203,240,63,.04)", border: "#3b451f", fg: "#6b7462", sub: "#3f4839" };
+    case "expired":
+      return { bg: "transparent", border: "#3a2020", fg: "#8a5a5a", sub: "#6d4444" };
+    case "future":
+      return { bg: "transparent", border: "#1e2219", fg: "#3f4839", sub: "#3f4839" };
+    default:
+      return { bg: "transparent", border: "#1e2219", fg: "#6b7462", sub: "#3f4839" };
+  }
+}
+
+function Cell({
   label,
-  detail,
+  sub,
   state,
-  color,
   onClick,
-  disabled,
+  busy,
 }: {
   label: string;
-  detail: string;
-  state: "confirmed" | "pending" | "expired" | "empty" | "rest";
-  color: string;
+  sub: string;
+  state: CellState;
   onClick?: () => void;
-  disabled: boolean;
+  busy: boolean;
 }) {
-  const style: Record<string, { bg: string; border: string; fg: string }> = {
-    confirmed: { bg: color, border: color, fg: "#12150f" },
-    pending: { bg: "rgba(200,245,66,.06)", border: color, fg: color },
-    expired: { bg: "transparent", border: "#3a2020", fg: "#8a5a5a" },
-    empty: { bg: "transparent", border: "var(--color-line)", fg: "var(--color-faint)" },
-    rest: { bg: "rgba(200,245,66,.05)", border: "rgba(200,245,66,.25)", fg: "var(--color-muted)" },
-  };
-  const s = style[state];
-
+  const v = cellVisuals(state);
+  const actionable = !!onClick;
   return (
     <button
       onClick={onClick}
-      disabled={disabled}
-      className="flex flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl border-2 px-2 py-2.5 transition-transform active:scale-[.97] disabled:active:scale-100"
-      style={{ background: s.bg, borderColor: s.border, color: s.fg }}
+      disabled={!actionable || busy}
+      aria-pressed={state === "confirmed"}
+      className="fp-tap box-border rounded-[14px] border-[1.5px] px-2 py-[13px] text-center disabled:cursor-default"
+      style={{ background: v.bg, borderColor: v.border }}
     >
-      <span className="text-[13px] font-extrabold leading-none">
-        {state === "confirmed" ? "✓ " : ""}
+      <div className="text-[13px] font-bold leading-[1.2]" style={{ color: v.fg }}>
         {label}
-      </span>
-      <span className="text-[10.5px] font-semibold leading-tight opacity-80">{detail}</span>
+      </div>
+      <div className="mt-[3px] text-[10.5px] font-semibold" style={{ color: v.sub }}>
+        {busy ? "…" : sub}
+      </div>
     </button>
   );
 }
+
+const HOW_STEPS = [
+  "Harshi logs Move (swim or gym) and Diet on the Today screen.",
+  "Manoj taps the matching boxes here to confirm them.",
+  "Only confirmed days count toward the streak, calendar and monthly targets.",
+  "Not confirmed by the end of the next day? The claim expires and is lost.",
+];
 
 export default function PartnerScreen({
   board,
@@ -62,155 +93,130 @@ export default function PartnerScreen({
   onConfirm: (date: string, kind: "move" | "diet", confirmed: boolean) => void;
   busyKey: string | null;
 }) {
-  const { stats, tracker, me } = board;
+  const [showHow, setShowHow] = useState(true);
+  const { stats } = board;
   const rows = stats.confirmRows;
-  const isPartner = me?.role === "PARTNER";
-  const [note, setNote] = useState<string | null>(null);
+  const isPartner = board.me?.role === "PARTNER";
+  const waiting = stats.awaitingConfirm;
 
-  function boxState(r: ConfirmRow, kind: "move" | "diet") {
-    const logged = kind === "move" ? r.movedLogged : r.dietLogged;
-    const confirmed = kind === "move" ? r.moveConfirmed : r.dietConfirmed;
-    if (r.isSunday) return "rest" as const;
-    if (confirmed) return "confirmed" as const;
-    if (!logged) return r.future ? ("empty" as const) : r.expired ? ("expired" as const) : ("empty" as const);
-    if (r.confirmable) return "pending" as const;
-    return "expired" as const;
-  }
+  /** What a single box should look like and whether it can be tapped. */
+  function describe(row: ConfirmRow, kind: "move" | "diet") {
+    const logged = kind === "move" ? row.movedLogged : row.dietLogged;
+    const confirmed = kind === "move" ? row.moveConfirmed : row.dietConfirmed;
+    const label = kind === "move" ? "Move" : "Diet";
 
-  function detailFor(r: ConfirmRow, kind: "move" | "diet") {
-    if (r.isSunday) return "rest day";
-    if (r.future) return "—";
-    const logged = kind === "move" ? r.movedLogged : r.dietLogged;
-    const confirmed = kind === "move" ? r.moveConfirmed : r.dietConfirmed;
     if (confirmed) {
-      return kind === "move" ? r.moveKinds.map((k) => HABIT[k].label).join(" + ") : "confirmed";
+      const names = kind === "move" ? row.moveKinds.map((k) => HABIT[k].label).join(" + ") : "Diet";
+      return { state: "confirmed" as CellState, label, sub: "confirmed", title: names, act: true };
     }
-    if (!logged) return "not logged";
-    if (r.confirmable) {
-      return kind === "move" ? r.moveKinds.map((k) => HABIT[k].label).join(" + ") : "tap to confirm";
+    if (row.future) return { state: "future" as CellState, label, sub: "—", act: false };
+    if (logged && row.confirmable) {
+      const names = kind === "move" ? row.moveKinds.map((k) => HABIT[k].label).join(" + ") : "Logged";
+      return { state: "claimed" as CellState, label, sub: names, act: true };
     }
-    return "expired";
-  }
-
-  function handle(r: ConfirmRow, kind: "move" | "diet") {
-    if (!isPartner) {
-      setNote(`Only ${board.partner?.name ?? "your partner"} can confirm these.`);
-      setTimeout(() => setNote(null), 2200);
-      return;
-    }
-    const logged = kind === "move" ? r.movedLogged : r.dietLogged;
-    const confirmed = kind === "move" ? r.moveConfirmed : r.dietConfirmed;
-    if (!logged || (!r.confirmable && !confirmed)) return;
-    onConfirm(r.date, kind, !confirmed);
+    if (logged && row.expired) return { state: "expired" as CellState, label, sub: "expired", act: false };
+    if (row.isSunday) return { state: "rest" as CellState, label, sub: "rest day", act: false };
+    return { state: "empty" as CellState, label, sub: "not logged", act: false };
   }
 
   return (
-    <div className="fp-screen">
-      <header className="pt-3.5 pb-5">
-        <Eyebrow>
-          {stats.awaitingConfirm === 0
-            ? "Nothing waiting"
-            : `${stats.awaitingConfirm} waiting on you`}
-        </Eyebrow>
-        <h1 className="mt-1 text-[28px] font-bold tracking-[-.5px] text-text">Together</h1>
-        <p className="mt-1.5 text-[13px] font-semibold text-muted">
-          {isPartner
-            ? `Confirm what ${tracker.name} logged. Unconfirmed by end of the next day and it's gone.`
-            : `Waiting on ${board.partner?.name ?? "your partner"} to confirm. You can't tick your own boxes.`}
-        </p>
-      </header>
+    <div className="fp-screen flex flex-col gap-3">
+      <ScreenTitle
+        eyebrow={waiting > 0 ? `${waiting} waiting on ${board.partner?.name ?? "your partner"}` : "All caught up"}
+        eyebrowColor={waiting > 0 ? "var(--color-lime)" : undefined}
+        title="Together"
+        sub={
+          isPartner
+            ? "Tap a claimed box to confirm it. Only what you confirm counts."
+            : `Waiting on ${board.partner?.name ?? "your partner"} to confirm. You can't tick your own boxes.`
+        }
+      />
 
-      <Card className="p-3.5">
-        {/* Column headers */}
-        <div className="mb-2 flex items-center gap-2 px-1">
-          <div className="w-11 shrink-0" />
-          <div className="flex flex-1 gap-2">
-            <div className="flex-1 text-center text-[11px] font-bold uppercase tracking-[1.2px] text-muted">
-              Move
-            </div>
-            <div className="flex-1 text-center text-[11px] font-bold uppercase tracking-[1.2px] text-muted">
-              Diet
-            </div>
+      <Card className="rounded-3xl px-4 py-[18px]">
+        <div className="grid items-center gap-[7px]" style={{ gridTemplateColumns: "44px 1fr 1fr" }}>
+          <div />
+          <div
+            className="pb-1 text-center text-[9.5px] font-bold tracking-[1.4px]"
+            style={{ color: "#535c4c" }}
+          >
+            MOVE
           </div>
-        </div>
+          <div
+            className="pb-1 text-center text-[9.5px] font-bold tracking-[1.4px]"
+            style={{ color: "#535c4c" }}
+          >
+            DIET
+          </div>
 
-        <div className="flex flex-col gap-2">
-          {rows.map((r) => {
-            const rowBusy = busyKey?.startsWith(r.date);
+          {rows.map((row) => {
+            const move = describe(row, "move");
+            const diet = describe(row, "diet");
             return (
-              <div
-                key={r.date}
-                className="flex items-center gap-2"
-                style={{ opacity: r.future ? 0.4 : rowBusy ? 0.6 : 1 }}
-              >
-                {/* Day label */}
-                <div className="w-11 shrink-0">
+              <div key={row.date} className="contents">
+                <div className="pr-1.5">
                   <div
-                    className="text-[14px] font-extrabold leading-none"
-                    style={{ color: r.isToday ? "var(--color-lime)" : "var(--color-text)" }}
+                    className="text-[13px] font-bold leading-[1.2]"
+                    style={{ color: row.isToday ? "var(--color-lime)" : "var(--color-text-2)" }}
                   >
-                    {r.dayLetter}
+                    {row.dayLetter}
                   </div>
-                  <div className="mt-0.5 text-[10.5px] font-semibold text-faint">
-                    {r.date.slice(8)}
-                    {r.isToday ? " ·now" : ""}
+                  <div className="fp-nums mt-[3px] text-[10.5px] font-semibold text-faint">
+                    {row.isToday ? `${Number(row.date.slice(8))} · now` : Number(row.date.slice(8))}
                   </div>
                 </div>
 
-                <div className="flex flex-1 gap-2">
-                  <Box
-                    label="Move"
-                    detail={detailFor(r, "move")}
-                    state={boxState(r, "move")}
-                    color={HABIT.gym.hex}
-                    onClick={() => handle(r, "move")}
-                    disabled={r.future || rowBusy === true}
-                  />
-                  <Box
-                    label="Diet"
-                    detail={detailFor(r, "diet")}
-                    state={boxState(r, "diet")}
-                    color={HABIT.diet.hex}
-                    onClick={() => handle(r, "diet")}
-                    disabled={r.future || rowBusy === true}
-                  />
-                </div>
+                {(["move", "diet"] as const).map((kind) => {
+                  const d = kind === "move" ? move : diet;
+                  const key = `${row.date}:${kind}`;
+                  // Only the partner can act, and only on a box that is
+                  // claimed-and-open or already confirmed (to undo it).
+                  const canAct = isPartner && d.act;
+                  return (
+                    <Cell
+                      key={key}
+                      label={d.label}
+                      sub={d.sub}
+                      state={d.state}
+                      busy={busyKey === key}
+                      onClick={
+                        canAct
+                          ? () => onConfirm(row.date, kind, d.state !== "confirmed")
+                          : undefined
+                      }
+                    />
+                  );
+                })}
               </div>
             );
           })}
         </div>
       </Card>
 
-      {note ? (
-        <p
-          className="mt-3 rounded-2xl border px-4 py-3 text-[13px] font-bold"
-          style={{ borderColor: "rgba(255,138,138,.35)", color: "#ff8a8a" }}
+      <Card className="rounded-[22px] px-[18px] py-4">
+        <button
+          onClick={() => setShowHow((v) => !v)}
+          aria-expanded={showHow}
+          className="fp-tap flex w-full items-center justify-between"
         >
-          {note}
-        </p>
-      ) : null}
+          <Eyebrow>How it works</Eyebrow>
+          <span className="text-[11px] font-bold text-lime">{showHow ? "Hide" : "Show"}</span>
+        </button>
 
-      {/* Legend */}
-      <Card className="mt-3 p-4">
-        <Eyebrow className="mb-2.5">How it works</Eyebrow>
-        <ul className="flex flex-col gap-2 text-[12.5px] font-semibold leading-snug text-text-2">
-          <li>
-            <span className="text-lime">1.</span> {tracker.name} logs Move (swim or gym) and Diet on
-            the Today screen.
-          </li>
-          <li>
-            <span className="text-lime">2.</span> {board.partner?.name ?? "The partner"} taps the
-            matching boxes here to confirm them.
-          </li>
-          <li>
-            <span className="text-lime">3.</span> Only confirmed days count toward the streak,
-            calendar and monthly targets.
-          </li>
-          <li>
-            <span style={{ color: "#ff8a8a" }}>4.</span> Not confirmed by the end of the next day?
-            The claim expires and is lost.
-          </li>
-        </ul>
+        {showHow ? (
+          <ol className="mt-[15px] flex flex-col gap-[11px]">
+            {HOW_STEPS.map((text, i) => (
+              <li key={text} className="flex gap-2.5">
+                <span
+                  className="w-3 shrink-0 text-[12.5px] font-extrabold"
+                  style={{ color: i === 3 ? ALERT : "var(--color-lime)" }}
+                >
+                  {i + 1}.
+                </span>
+                <span className="text-[12.5px] font-medium leading-[1.5] text-text-2">{text}</span>
+              </li>
+            ))}
+          </ol>
+        ) : null}
       </Card>
     </div>
   );

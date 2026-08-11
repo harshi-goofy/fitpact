@@ -101,7 +101,7 @@ export default function LoginScreen({ onSignedIn }: { onSignedIn: () => void }) 
           {busy ? (
             <span className="text-[13px] font-semibold text-muted">Checking…</span>
           ) : error ? (
-            <span className="text-[13px] font-semibold" style={{ color: "#ff8a8a" }}>
+            <span className="text-[13px] font-semibold" style={{ color: "#f9736b" }}>
               {error}
             </span>
           ) : null}

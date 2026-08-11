@@ -12,43 +12,59 @@ import { HABIT } from "./ui";
 
 type Tab = "today" | "calendar" | "badges" | "partner";
 
-function IconToday({ size = 22 }: { size?: number }) {
+/* Nav icons, traced from the design handoff: 21px, 1.9 stroke, round caps. */
+function Svg({ size, children }: { size: number; children: React.ReactNode }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      <polyline points="9 22 9 12 15 12 15 22" />
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {children}
     </svg>
   );
 }
 
-function IconCalendar({ size = 22 }: { size?: number }) {
+function IconToday({ size = 21 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="3" y1="10" x2="21" y2="10" />
-    </svg>
+    <Svg size={size}>
+      <path d="M3 10.5 12 3l9 7.5" />
+      <path d="M5.5 9.5V20h13V9.5" />
+      <path d="M9.8 20v-5.4h4.4V20" />
+    </Svg>
   );
 }
 
-function IconBadges({ size = 22 }: { size?: number }) {
+function IconCalendar({ size = 21 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="8" r="6" />
-      <path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11" />
-    </svg>
+    <Svg size={size}>
+      <rect x="3.5" y="5" width="17" height="16" rx="3" />
+      <path d="M3.5 9.5h17M8 3.2v3.4M16 3.2v3.4" />
+    </Svg>
   );
 }
 
-function IconTogether({ size = 22 }: { size?: number }) {
+function IconBadges({ size = 21 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
+    <Svg size={size}>
+      <circle cx="12" cy="9" r="5.6" />
+      <path d="M8.6 13.6 7.4 21l4.6-2.5 4.6 2.5-1.2-7.4" />
+    </Svg>
+  );
+}
+
+function IconTogether({ size = 21 }: { size?: number }) {
+  return (
+    <Svg size={size}>
+      <circle cx="9" cy="8.4" r="3.4" />
+      <path d="M3.4 19.4c0-3.1 2.5-5.2 5.6-5.2s5.6 2.1 5.6 5.2" />
+      <path d="M16.2 5.6a3.2 3.2 0 0 1 0 6M17.6 14.6c2.1.5 3.4 2.2 3.4 4.8" />
+    </Svg>
   );
 }
 
@@ -210,31 +226,21 @@ export default function App({ initial }: { initial: BoardPayload }) {
   }
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-[430px] px-5 pb-28">
-      {/* Who's holding the phone, and a way out of it. */}
+    <div className="mx-auto min-h-dvh w-full max-w-[430px] px-[18px] pb-28">
+      {/* Who's holding the phone, and a way out of it. The awaiting count used
+          to live here too; the streak hero's pill says it better and in the
+          place you already look. */}
       <div className="flex items-center justify-between pt-3">
-        <span className="text-[11.5px] font-bold uppercase tracking-[1.2px] text-faint">
+        <span className="text-[10.5px] font-bold uppercase tracking-[1.4px] text-faint">
           {board.me.name} · {board.me.role === "TRACKER" ? "logging" : "confirming"}
         </span>
         <button
           onClick={signOut}
-          className="text-[11.5px] font-bold uppercase tracking-[1.2px] text-faint underline-offset-2 active:underline"
+          className="text-[10.5px] font-bold uppercase tracking-[1.4px] text-faint underline-offset-2 active:underline"
         >
           Switch
         </button>
       </div>
-
-      {stats.awaitingConfirm > 0 && tab !== "partner" ? (
-        <button
-          onClick={() => setTab("partner")}
-          className="mt-2 w-full rounded-2xl border px-4 py-3 text-left text-[13px] font-bold"
-          style={{ borderColor: "rgba(200,245,66,.35)", background: "rgba(200,245,66,.07)" }}
-        >
-          <span className="text-lime">{stats.awaitingConfirm}</span>{" "}
-          {stats.awaitingConfirm === 1 ? "box" : "boxes"}{" "}
-          {board.me.role === "PARTNER" ? "waiting on you" : `waiting on ${board.partner?.name ?? "your partner"}`} →
-        </button>
-      ) : null}
 
       {tab === "today" ? (
         <TodayScreen
@@ -245,6 +251,8 @@ export default function App({ initial }: { initial: BoardPayload }) {
           canLog={isTracker}
           onClaimReward={claimReward}
           claimBusy={claimBusy}
+          onGoTogether={() => setTab("partner")}
+          onFlash={(text) => setToast({ text })}
         />
       ) : tab === "calendar" ? (
         <CalendarScreen board={board} onRefresh={refresh} canLog={isTracker} />
@@ -257,10 +265,11 @@ export default function App({ initial }: { initial: BoardPayload }) {
       {toast ? (
         <div
           role="status"
-          className="fp-toast fixed bottom-[92px] left-1/2 z-20 rounded-2xl px-4 py-2.5 text-[13px] font-bold shadow-lg"
+          className="fp-toast fixed bottom-[100px] left-1/2 z-20 w-[calc(100%-40px)] max-w-[390px] rounded-[18px] px-[18px] py-[15px] text-[13px] font-bold"
           style={{
-            background: toast.bad ? "#ff8a8a" : "var(--color-lime)",
+            background: toast.bad ? "#f9736b" : "var(--color-lime)",
             color: "var(--color-on-lime)",
+            boxShadow: "0 14px 34px rgba(0,0,0,.55)",
           }}
         >
           {toast.text}
@@ -268,8 +277,11 @@ export default function App({ initial }: { initial: BoardPayload }) {
       ) : null}
 
       {/* Bottom nav. Fixed, with a fade behind it so content scrolls under. */}
-      <nav className="fixed inset-x-0 bottom-0 z-10 flex justify-center bg-gradient-to-t from-screen via-screen/95 to-transparent pt-6">
-        <div className="flex w-full max-w-[430px] items-center justify-around px-5 pb-[max(14px,env(safe-area-inset-bottom))]">
+      <nav
+        className="fixed inset-x-0 bottom-0 z-10 flex justify-center pt-6"
+        style={{ background: "linear-gradient(to top, #0b0d0c 62%, rgba(11,13,12,0))" }}
+      >
+        <div className="flex w-full max-w-[430px] items-center px-3 pb-[max(22px,env(safe-area-inset-bottom))]">
           {TABS.map((t) => {
             const active = tab === t.id;
             const Icon = TAB_ICONS[t.id];
@@ -278,18 +290,16 @@ export default function App({ initial }: { initial: BoardPayload }) {
                 key={t.id}
                 onClick={() => setTab(t.id)}
                 aria-current={active ? "page" : undefined}
-                className="relative flex flex-1 flex-col items-center gap-1 py-1.5"
-                style={{ color: active ? "var(--color-lime)" : "var(--color-muted)" }}
+                className="fp-tap relative flex flex-1 flex-col items-center gap-1.5 py-1.5"
+                style={{ color: active ? "var(--color-lime)" : "#6b7462" }}
               >
-                <Icon size={22} />
-                <span
-                  className="text-[12px] font-bold transition-colors"
-                  style={{ color: active ? "var(--color-text)" : "var(--color-muted)" }}
-                >
-                  {t.label}
-                </span>
+                <Icon size={21} />
+                <span className="text-[10.5px] font-bold tracking-[.2px]">{t.label}</span>
                 {t.id === "partner" && stats.awaitingConfirm > 0 ? (
-                  <span className="absolute right-[22%] top-0 h-1.5 w-1.5 rounded-full bg-lime" />
+                  <span
+                    className="absolute h-[7px] w-[7px] rounded-full bg-lime"
+                    style={{ top: -2, right: "calc(50% - 20px)" }}
+                  />
                 ) : null}
               </button>
             );

@@ -9,27 +9,34 @@
  */
 @theme {
   --color-screen: #0b0d0c;
-  --color-card: #151814;
-  --color-line: #262a22;
-  --color-line-hover: #3a4034;
+  --color-card: #141712;
+  --color-line: #23271e;
+  --color-line-hover: #3d4436;
+  /* Sunken surfaces — inputs, locked badge tiles, empty calendar cells. */
+  --color-well: #191d15;
+  --color-input: #0f120e;
 
-  --color-text: #f2f4ef;
-  --color-text-2: #a8b09c;
-  --color-muted: #7c8474;
-  --color-faint: #6a7263;
+  --color-text: #f4f6f1;
+  --color-text-2: #8b9380;
+  --color-muted: #5f6858;
+  --color-faint: #4f5848;
+  /* Eyebrow labels sit between secondary and muted and are used often enough
+     to deserve their own token rather than a one-off hex in eight files. */
+  --color-eyebrow: #77806d;
 
-  --color-lime: #c8f542;
+  --color-lime: #cbf03f;
   --color-lime-hover: #dcff7a;
-  --color-on-lime: #12150f;
+  --color-on-lime: #131709;
 
-  --color-swim: #5ad9ff;
-  --color-gym: #c8f542;
+  --color-swim: #5ecfe8;
+  --color-gym: #cbf03f;
   --color-diet: #ffb45c;
+  --color-alert: #f9736b;
 
-  --color-heat-0: #22261f;
-  --color-heat-1: #3f5b1a;
-  --color-heat-2: #8ab52c;
-  --color-heat-3: #c8f542;
+  --color-heat-0: #22261e;
+  --color-heat-1: #41591f;
+  --color-heat-2: #88b52f;
+  --color-heat-3: #cbf03f;
 
   --font-sans: Archivo, system-ui, -apple-system, sans-serif;
 }
@@ -91,9 +98,118 @@ button {
   animation: fp-fade 200ms ease-out;
 }
 
+/* ------------------------------------------------------------------ *
+ * Polish layer
+ *
+ * Everything below is presentation only — no layout depends on it, so it
+ * can be removed wholesale without breaking a screen. Each block says what
+ * it buys, because "looks better" is not a maintainable reason to keep CSS.
+ * ------------------------------------------------------------------ */
+
+/* Cards are deliberately flat in this design — the spec calls for a single
+   fill and a 1px border, no gradient and no shadow. The class is kept as the
+   one hook for card-level treatment so it stays a single edit if that changes. */
+.fp-card {
+  background-color: var(--color-card);
+}
+
+/* Tap feedback. Thumbs need to feel the press land — 60ms of scale is below
+   conscious notice but the absence of it reads as lag. */
+.fp-tap {
+  transition:
+    transform 60ms ease-out,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+.fp-tap:active {
+  transform: scale(0.965);
+}
+
+/* A pending claim is genuinely in-between: logged, not yet counted. A slow
+   breath conveys "waiting on someone" better than a static dashed border. */
+@keyframes fp-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.62;
+  }
+}
+.fp-pending {
+  animation: fp-breathe 2.6s ease-in-out infinite;
+}
+
+/* Cards arriving together look like a page load; arriving in sequence looks
+   like the app is assembling itself for you. 40ms apart, capped at 6 — past
+   that the last card feels late. */
+@keyframes fp-stagger {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fp-stagger > * {
+  animation: fp-stagger 320ms ease-out backwards;
+}
+.fp-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.fp-stagger > *:nth-child(2) { animation-delay: 40ms; }
+.fp-stagger > *:nth-child(3) { animation-delay: 80ms; }
+.fp-stagger > *:nth-child(4) { animation-delay: 120ms; }
+.fp-stagger > *:nth-child(5) { animation-delay: 160ms; }
+.fp-stagger > *:nth-child(n + 6) { animation-delay: 200ms; }
+
+/* Numbers that matter get a subtle count-in so the eye is drawn to them on
+   arrival. Applied to the streak digit only — everywhere else it's noise. */
+@keyframes fp-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.84);
+  }
+  70% {
+    transform: scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.fp-pop {
+  animation: fp-pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
+}
+
+/* Keyboard focus was invisible on dark. This is the only accessibility fix
+   in this block and the only one that isn't optional. */
+:focus-visible {
+  outline: 2px solid var(--color-lime);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Home-indicator clearance on notched iPhones, where the bottom nav lives. */
+.fp-safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+}
+
+/* Tabular figures stop weights and counters from jittering as digits change. */
+.fp-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
 @media (prefers-reduced-motion: reduce) {
   .fp-toast,
-  .fp-screen {
+  .fp-screen,
+  .fp-stagger > *,
+  .fp-pop,
+  .fp-pending {
     animation: none;
+  }
+  .fp-tap:active {
+    transform: none;
   }
 }
