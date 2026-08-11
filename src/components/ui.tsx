@@ -124,12 +124,12 @@ export function RewardTrack({
   nextId,
 }: {
   pct: number;
-  rewards: { id: string; pos: number; kgLost: number; earned: boolean }[];
+  rewards: { id: string; pos: number; kgLost: number; atKg: number; earned: boolean }[];
   nextId?: string | null;
 }) {
   const w = Math.min(Math.max(pct, 0), 1) * 100;
   return (
-    <div className="relative mt-6 h-[34px]">
+    <div className="relative mt-6 h-[50px]">
       <div
         className="absolute inset-x-0 top-[5px] h-1 rounded-full"
         style={{ background: "var(--color-heat-0)" }}
@@ -143,7 +143,7 @@ export function RewardTrack({
         return (
           <div
             key={r.id}
-            className="absolute top-0 flex -translate-x-1/2 flex-col items-center gap-1.5"
+            className="absolute top-0 flex -translate-x-1/2 flex-col items-center gap-1"
             style={{ left: `${Math.min(Math.max(r.pos, 0), 1) * 100}%` }}
           >
             <div
@@ -158,6 +158,14 @@ export function RewardTrack({
               style={{ color: isNext || r.earned ? "var(--color-text-2)" : "var(--color-faint)" }}
             >
               −{r.kgLost}
+            </div>
+            {/* The scale reading that unlocks this reward, so the ladder reads
+                against the number on the scale, not just kg lost from start. */}
+            <div
+              className="fp-nums whitespace-nowrap text-[9px] font-semibold"
+              style={{ color: "var(--color-faint)", opacity: isNext || r.earned ? 0.85 : 0.55 }}
+            >
+              {r.atKg.toFixed(1)} kg
             </div>
           </div>
         );
