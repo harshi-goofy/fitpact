@@ -7,7 +7,6 @@ import {
   cheatUsage,
   claimDeadline,
   formatCountdown,
-  nextRewardLine,
   nextStep,
   weightDelta,
 } from "@/lib/derive";
@@ -24,7 +23,6 @@ import {
   HABIT_ORDER,
   LetterBadge,
   RewardTrack,
-  Sparkline,
 } from "./ui";
 
 /**
@@ -93,18 +91,9 @@ export default function TodayScreen({
   const countdown = useCountdown(claimDeadline(today), awaiting > 0);
   const cheatUsed = cheatUsage(cheat);
 
-  /* The last eight weigh-ins, oldest first — the sparkline's whole input. */
-  const series = Object.keys(board.entries)
-    .filter((k) => k <= today && board.entries[k]?.weightKg != null)
-    .sort()
-    .map((k) => board.entries[k].weightKg as number)
-    .slice(-8);
-  const seriesDelta = series.length >= 2 ? series[series.length - 1] - series[0] : null;
-
-  /* Movement since the previous weigh-in, and the next reward restated
-     against the latest one — both recompute the moment a weight is logged. */
+  /* Movement since the previous weigh-in — recomputes the moment a new
+     weight is logged. */
   const delta = weightDelta(board.entries, today);
-  const nextReward = nextRewardLine(weight, rewards);
 
   const confirmedCount = HABIT_ORDER.filter((k) => stateFor(entry, k) === "confirmed").length;
   const pillText =
@@ -318,78 +307,36 @@ export default function TodayScreen({
                 <span className="fp-nums">{delta.label}</span>
               </div>
             ) : null}
-
-            <div
-              className="mt-2 text-[12px] font-bold"
-              style={{ color: weight.currentKg <= weight.monthlyTargetKg ? "var(--color-lime)" : ALERT }}
-            >
-              {weight.currentKg <= weight.monthlyTargetKg
-                ? "On track for this month"
-                : `${(weight.currentKg - weight.monthlyTargetKg).toFixed(1)} kg above this month's target`}
-            </div>
           </div>
 
           <div className="text-right">
             <Eyebrow>{stats.monthLabel.slice(0, 3)} target</Eyebrow>
-            <div className="fp-nums mt-2 text-[19px] font-bold tracking-[-.4px] text-text-2">
-              {weight.monthlyTargetKg.toFixed(1)} kg
-            </div>
-            <Eyebrow className="mt-3.5">Goal</Eyebrow>
-            <div className="fp-nums mt-1.5 text-[19px] font-bold tracking-[-.4px] text-lime">
-              {weight.goalKg.toFixed(1)} kg
+            <div className="fp-nums mt-2 text-[38px] font-extrabold leading-[.9] tracking-[-1.8px] text-text-2">
+              {weight.monthlyTargetKg.toFixed(1)}
             </div>
           </div>
         </div>
 
-        {/* Trend */}
-        {series.length >= 2 ? (
-          <div className="mt-5 flex items-end gap-3.5 border-t border-line pt-[18px]">
-            <Sparkline values={series} color="var(--color-lime)" />
-            <div className="shrink-0 text-right">
-              <div
-                className="fp-nums text-[13px] font-extrabold tracking-[-.3px]"
-                style={{ color: seriesDelta !== null && seriesDelta > 0 ? ALERT : "var(--color-lime)" }}
-              >
-                {seriesDelta === null
-                  ? "—"
-                  : `${seriesDelta > 0 ? "+" : "−"}${Math.abs(seriesDelta).toFixed(1)} kg`}
-              </div>
-              <div className="mt-[3px] text-[10px] font-semibold text-muted">
-                last {series.length} weigh-ins
-              </div>
-            </div>
-          </div>
-        ) : null}
+        {/* The one number that actually matters day to day: where you stand
+            against this month's target, big enough to read without leaning in. */}
+        <div
+          className="mt-4 text-[17px] font-extrabold tracking-[-.3px]"
+          style={{ color: weight.currentKg <= weight.monthlyTargetKg ? "var(--color-lime)" : ALERT }}
+        >
+          {weight.currentKg <= weight.monthlyTargetKg
+            ? "On track for this month"
+            : `${(weight.currentKg - weight.monthlyTargetKg).toFixed(1)} kg above this month's target`}
+        </div>
 
         {/* Reward ladder */}
-        <RewardTrack pct={weight.pct} rewards={rewards.rewards} nextId={rewards.next?.id} />
+        <div className="mt-5 border-t border-line pt-[18px]">
+          <RewardTrack pct={weight.pct} rewards={rewards.rewards} nextId={rewards.next?.id} />
+        </div>
 
         <div className="mt-0.5 flex justify-between text-[11px] font-bold text-muted">
           <span>{weight.startKg.toFixed(0)} kg</span>
           <span>{weight.goalKg.toFixed(0)} kg</span>
         </div>
-
-        {/* Next reward, in the terms the scale speaks: the reading to hit and
-            how far that is from the latest weigh-in. Surfaced here rather than
-            left inside the collapsed list, because it is the number the user
-            opens the app to check. */}
-        {nextReward ? (
-          <div className="mt-[18px] rounded-2xl border border-line p-3.5">
-            <div className="flex items-baseline justify-between gap-3">
-              <Eyebrow>Next reward</Eyebrow>
-              <div className="fp-nums text-[11px] font-bold text-muted">
-                {rewards.earnedCount} of {rewards.rewards.length}
-              </div>
-            </div>
-            <div className="fp-nums mt-2 text-[17px] font-extrabold tracking-[-.4px] text-text">
-              {nextReward.headline}
-            </div>
-            <div className="mt-1 text-[12px] font-semibold text-text-2">{nextReward.label}</div>
-            <div className="mt-2.5">
-              <Bar pct={nextReward.pct} color="var(--color-lime)" />
-            </div>
-          </div>
-        ) : null}
 
         <Disclosure
           className="mt-5 border-t border-line pt-[18px]"
